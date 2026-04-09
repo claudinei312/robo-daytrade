@@ -8,7 +8,11 @@ from datetime import datetime
 import time
 
 # ===== CONFIG =====
-API_KEY = st.secrets["API_KEY"]
+try:
+    API_KEY = st.secrets["API_KEY"]
+except:
+    API_KEY = "4b17399dcf214533abd7d72ea416f1df"
+
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
 td = TDClient(apikey=API_KEY)
@@ -22,10 +26,11 @@ if not rodando:
     st.warning("Robô desligado")
     st.stop()
 
-# ===== DADOS =====
+# ===== CACHE (ESSENCIAL) =====
+@st.cache_data(ttl=240)  # 4 minutos (ideal para M5)
 def pegar_dados(ativo):
     try:
-        ts = td.time_series(symbol=ativo, interval="5min", outputsize=250).as_pandas()
+        ts = td.time_series(symbol=ativo, interval="5min", outputsize=100).as_pandas()
         ts = ts[::-1].reset_index(drop=True)
 
         for col in ['open','high','low','close']:
@@ -43,7 +48,7 @@ def evitar_noticias():
         return True
     return False
 
-# ===== ANÁLISE COMPLETA =====
+# ===== ANÁLISE =====
 def analisar(data):
     data['MA9'] = SMAIndicator(data['close'], 9).sma_indicator()
     data['MA21'] = SMAIndicator(data['close'], 21).sma_indicator()
@@ -78,14 +83,14 @@ def analisar(data):
     if atr < 0.0003 or atr > 0.003:
         return "AGUARDAR", preco, 0, 0
 
-    # ===== POTENCIAL =====
+    # POTENCIAL
     if preco > ma200 and ma9 > ma21 and rsi > 55 and not lateral:
         return "COMPRA_POTENCIAL", preco, 0, 0
 
     if preco < ma200 and ma9 < ma21 and rsi < 45 and not lateral:
         return "VENDA_POTENCIAL", preco, 0, 0
 
-    # ===== CONFIRMADO =====
+    # CONFIRMADO
     if (
         preco > ma200 and
         ma9 > ma21 and
@@ -147,25 +152,11 @@ for i, ativo in enumerate(ativos):
         else:
             st.error("Erro ao carregar")
 
-# ===== SINCRONIZAÇÃO M5 =====
+# ===== INFO =====
 agora = datetime.now()
-minuto = agora.minute
-segundo = agora.second
-
-resto = minuto % 5
-tempo_restante = (5 - resto) * 60 - segundo
-
 st.write("🕒 Atualizado:", agora.strftime("%H:%M:%S"))
-st.write(f"⏳ Próximo evento em: {tempo_restante} segundos")
 
-# lógica de espera inteligente
-if tempo_restante > 60:
-    sleep_time = tempo_restante - 60
-    st.info(f"⏳ Aguardando POTENCIAL em {sleep_time}s")
-    time.sleep(sleep_time)
-else:
-    sleep_time = tempo_restante
-    st.success(f"🚨 Aguardando CONFIRMAÇÃO em {sleep_time}s")
-    time.sleep(sleep_time)
-
+# ===== ATUALIZAÇÃO CONTROLADA =====
+st.info("🔄 Atualização automática a cada 60 segundos (economia de API)")
+time.sleep(60)
 st.rerun()
