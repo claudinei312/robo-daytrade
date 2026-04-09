@@ -6,12 +6,15 @@ from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 from datetime import datetime
 import time
+import requests
 
 # ===== CONFIG =====
 try:
     API_KEY = st.secrets["API_KEY"]
+    NEWS_API = st.secrets["NEWS_API"]
 except:
     API_KEY = "4b17399dcf214533abd7d72ea416f1df"
+    NEWS_API = "cbb654892f26479c98dcb781bea8f835"
 
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
@@ -40,6 +43,16 @@ def pegar_dados(ativo):
     except Exception as e:
         st.error(f"Erro {ativo}: {e}")
         return None
+
+# ===== NOTÍCIAS =====
+@st.cache_data(ttl=300)
+def pegar_noticias():
+    try:
+        url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&sortBy=publishedAt&pageSize=5&apiKey={NEWS_API}"
+        resposta = requests.get(url).json()
+        return resposta["articles"]
+    except:
+        return []
 
 # ===== FILTRO NOTÍCIAS =====
 def evitar_noticias():
@@ -146,7 +159,13 @@ for i, ativo in enumerate(ativos):
             else:
                 st.info("⚪ AGUARDAR")
 
-            st.line_chart(data['close'])
+# ===== NOTÍCIAS NO PAINEL =====
+st.subheader("📰 Notícias Forex em tempo real")
+
+noticias = pegar_noticias()
+
+for n in noticias:
+    st.write(f"🗞️ {n['title']}")
 
 # ===== SINCRONIZAÇÃO M5 =====
 agora = datetime.now()
@@ -159,7 +178,6 @@ tempo_restante = (5 - resto) * 60 - segundo
 st.write("🕒 Atualizado:", agora.strftime("%H:%M:%S"))
 st.write(f"⏳ Tempo para próxima vela: {tempo_restante}s")
 
-# lógica profissional
 if tempo_restante > 60:
     sleep_time = tempo_restante - 60
     st.info(f"⏳ Próxima análise POTENCIAL em {sleep_time}s")
