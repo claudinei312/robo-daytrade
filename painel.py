@@ -26,8 +26,8 @@ if not rodando:
     st.warning("Robô desligado")
     st.stop()
 
-# ===== CACHE (ESSENCIAL) =====
-@st.cache_data(ttl=240)  # 4 minutos (ideal para M5)
+# ===== CACHE =====
+@st.cache_data(ttl=240)
 def pegar_dados(ativo):
     try:
         ts = td.time_series(symbol=ativo, interval="5min", outputsize=100).as_pandas()
@@ -76,7 +76,6 @@ def analisar(data):
 
     lateral = abs(ma9 - ma21) < 0.0002
 
-    # filtros
     if evitar_noticias():
         return "AGUARDAR", preco, 0, 0
 
@@ -149,14 +148,25 @@ for i, ativo in enumerate(ativos):
 
             st.line_chart(data['close'])
 
-        else:
-            st.error("Erro ao carregar")
-
-# ===== INFO =====
+# ===== SINCRONIZAÇÃO M5 =====
 agora = datetime.now()
-st.write("🕒 Atualizado:", agora.strftime("%H:%M:%S"))
+minuto = agora.minute
+segundo = agora.second
 
-# ===== ATUALIZAÇÃO CONTROLADA =====
-st.info("🔄 Atualização automática a cada 60 segundos (economia de API)")
-time.sleep(60)
+resto = minuto % 5
+tempo_restante = (5 - resto) * 60 - segundo
+
+st.write("🕒 Atualizado:", agora.strftime("%H:%M:%S"))
+st.write(f"⏳ Tempo para próxima vela: {tempo_restante}s")
+
+# lógica profissional
+if tempo_restante > 60:
+    sleep_time = tempo_restante - 60
+    st.info(f"⏳ Próxima análise POTENCIAL em {sleep_time}s")
+    time.sleep(sleep_time)
+else:
+    sleep_time = tempo_restante
+    st.success(f"🚨 Aguardando CONFIRMAÇÃO em {sleep_time}s")
+    time.sleep(sleep_time)
+
 st.rerun()
