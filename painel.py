@@ -112,13 +112,6 @@ def analisar(data):
 
     return "AGUARDAR", preco, 0, 0
 
-# ===== TEMPO M5 =====
-agora = datetime.now()
-minutos = agora.minute
-segundos = agora.second
-resto = minutos % 5
-tempo_restante = (5 - resto)*60 - segundos
-
 # ===== PAINEL =====
 colunas = st.columns(3)
 
@@ -154,10 +147,25 @@ for i, ativo in enumerate(ativos):
         else:
             st.error("Erro ao carregar")
 
-# ===== INFO =====
-st.write("🕒 Atualizado:", agora.strftime("%H:%M:%S"))
-st.write(f"⏳ Próximo candle em: {tempo_restante} segundos")
+# ===== SINCRONIZAÇÃO M5 =====
+agora = datetime.now()
+minuto = agora.minute
+segundo = agora.second
 
-# ===== AUTO REFRESH =====
-time.sleep(10)
+resto = minuto % 5
+tempo_restante = (5 - resto) * 60 - segundo
+
+st.write("🕒 Atualizado:", agora.strftime("%H:%M:%S"))
+st.write(f"⏳ Próximo evento em: {tempo_restante} segundos")
+
+# lógica de espera inteligente
+if tempo_restante > 60:
+    sleep_time = tempo_restante - 60
+    st.info(f"⏳ Aguardando POTENCIAL em {sleep_time}s")
+    time.sleep(sleep_time)
+else:
+    sleep_time = tempo_restante
+    st.success(f"🚨 Aguardando CONFIRMAÇÃO em {sleep_time}s")
+    time.sleep(sleep_time)
+
 st.rerun()
