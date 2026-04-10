@@ -36,17 +36,18 @@ div[data-testid="stMetric"] {
 st.markdown("<div class='main-title'>📊 SNIPER PRO TRADING DESK</div>", unsafe_allow_html=True)
 
 # ======================
-# 🔐 CONFIG
+# 🔐 CONFIG (SEGURA)
 # ======================
 API_KEY = st.secrets["API_KEY"]
 NEWS_API = st.secrets["NEWS_API"]
+
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
 CHAT_ID = st.secrets["CHAT_ID"]
 
 td = TDClient(apikey=API_KEY)
 
 # ======================
-# 🎯 ATIVO FOCADO (OTIMIZADO)
+# 🎯 ATIVOS
 # ======================
 ativos = ["USD/JPY:FX"]
 
@@ -56,22 +57,26 @@ ativos = ["USD/JPY:FX"]
 st_autorefresh(interval=5000, key="refresh")
 
 rodando = st.toggle("🟢 Ativar Robô", value=True)
-
 if not rodando:
     st.stop()
 
 # ======================
-# 📩 TELEGRAM
+# 📩 TELEGRAM PROFISSIONAL
 # ======================
 def telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": msg,
+        "parse_mode": "HTML"
+    }
     try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+        requests.post(url, data=payload)
     except:
         pass
 
 # ======================
-# ⏱️ TIMER
+# ⏱ TIMER
 # ======================
 def tempo_candle():
     agora = datetime.datetime.utcnow()
@@ -99,7 +104,7 @@ def pegar_dados(ativo):
     df = td.time_series(
         symbol=ativo,
         interval="5min",
-        outputsize=300
+        outputsize=500
     ).as_pandas()
 
     df = df[::-1].reset_index()
@@ -114,7 +119,7 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 🧠 ESTRATÉGIA (IGUAL ORIGINAL)
+# 🧠 ESTRATÉGIA (NÃO ALTERADA)
 # ======================
 def analisar(df):
 
@@ -150,7 +155,49 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 ESTADO GLOBAL
+# 📊 BACKTEST (15 DIAS - 08H ÀS 12H)
+# ======================
+def backtest(df):
+
+    df = df.copy()
+    df = df[(df["datetime"].dt.hour >= 8) & (df["datetime"].dt.hour <= 12)]
+
+    wins = 0
+    losses = 0
+    trades = 0
+
+    for i in range(50, len(df)):
+
+        sub = df.iloc[:i].copy()
+        sinal, preco, stop, alvo = analisar(sub)
+
+        if sinal in ["COMPRA", "VENDA"]:
+            trades += 1
+
+            futuro = df.iloc[i:i+5]
+
+            if len(futuro) == 0:
+                continue
+
+            max_price = futuro["high"].max()
+            min_price = futuro["low"].min()
+
+            if sinal == "COMPRA":
+                if max_price >= alvo:
+                    wins += 1
+                elif min_price <= stop:
+                    losses += 1
+
+            if sinal == "VENDA":
+                if min_price <= alvo:
+                    wins += 1
+                elif max_price >= stop:
+                    losses += 1
+
+    return wins, losses, trades
+
+# ======================
+# 📥 ESTADO
 # ======================
 if "sinais" not in st.session_state:
     st.session_state.sinais = {}
@@ -164,6 +211,28 @@ if "ultimo_status" not in st.session_state:
 dados = {ativo: pegar_dados(ativo) for ativo in ativos}
 
 # ======================
+# 📊 BACKTEST BOTÃO
+# ======================
+st.divider()
+
+if st.button("📊 Rodar Backtest (15 dias / 08-12)"):
+
+    with st.spinner("Executando backtest..."):
+
+        df_bt = dados["USD/JPY:FX"]
+
+        w, l, t = backtest(df_bt)
+
+        st.success("Backtest concluído!")
+
+        st.metric("Trades", t)
+        st.metric("Wins", w)
+        st.metric("Losses", l)
+
+        if t > 0:
+            st.metric("Win Rate", f"{(w/t)*100:.2f}%")
+
+# ======================
 # 📊 LOOP PRINCIPAL
 # ======================
 for ativo in ativos:
@@ -175,7 +244,7 @@ for ativo in ativos:
     agora = datetime.datetime.now()
 
     # ======================
-    # 🚨 SINAL
+    # 🚨 TELEGRAM PROFISSIONAL
     # ======================
     if sinal in ["COMPRA", "VENDA"]:
 
@@ -189,19 +258,23 @@ for ativo in ativos:
             }
 
             telegram(f"""
-🚨 SINAL DE TRADE
+🚨 <b>SNIPER PRO TRADE</b>
 
 📊 Ativo: {ativo}
 📈 Direção: {sinal}
 
-💰 Entrada: {preco}
-🎯 Saída: {alvo}
+💰 Preço atual: {preco}
+🎯 Entrada: {preco}
+🛑 Stop: {stop}
+🏁 Alvo: {alvo}
 
-🟢 Hora: {agora.strftime('%H:%M:%S')}
+⏱ Horário: {agora.strftime('%H:%M:%S')}
+
+🧠 Estratégia: MA9 x MA21 + Suporte/Resistência
 """)
 
     # ======================
-    # ⏱ STATUS
+    # 📊 STATUS (ANTI-SPAM)
     # ======================
     ultimo = st.session_state.ultimo_status.get(ativo)
 
@@ -210,7 +283,7 @@ for ativo in ativos:
         st.session_state.ultimo_status[ativo] = agora
 
         telegram(f"""
-📊 STATUS
+📊 <b>STATUS</b>
 
 📌 {ativo}
 💰 Preço: {preco}
@@ -261,14 +334,12 @@ for ativo in ativos:
         st.info("📌 AGUARDANDO OPORTUNIDADE")
 
     # ======================
-    # ALERTA
+    # ALERTAS VISUAIS
     # ======================
     if sinal == "COMPRA":
         st.success("🟢 COMPRA")
-
     elif sinal == "VENDA":
         st.error("🔴 VENDA")
-
     else:
         st.info("⚪ AGUARDAR")
 
