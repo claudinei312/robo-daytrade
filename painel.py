@@ -76,7 +76,7 @@ if not rodando:
     st.stop()
 
 # ======================
-# 📩 TELEGRAM (ÚNICA ALTERAÇÃO)
+# 📩 TELEGRAM
 # ======================
 def telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -96,6 +96,14 @@ def telegram(msg):
 
     except Exception as e:
         print("❌ Falha conexão Telegram:", str(e))
+
+
+# ======================
+# 🧪 TESTE TELEGRAM (ADICIONADO)
+# ======================
+if st.button("📩 Testar Telegram"):
+    telegram("🚀 TESTE: Telegram funcionando corretamente!")
+    st.success("Mensagem enviada! Verifique seu Telegram.")
 
 # ======================
 # ⏱️ TIMER
@@ -141,7 +149,7 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 🧠 ESTRATÉGIA (MANTIDA + OTIMIZADA)
+# 🧠 ESTRATÉGIA
 # ======================
 def analisar(df):
 
