@@ -11,10 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 # ======================
 # 🎨 LAYOUT
 # ======================
-st.set_page_config(
-    page_title="Sniper Pro Trading",
-    layout="wide"
-)
+st.set_page_config(page_title="Sniper Pro Trading", layout="wide")
 
 st.markdown("""
 <style>
@@ -88,7 +85,7 @@ def tempo_candle():
     return f"{4 - minuto:02d}:{59 - segundo:02d}"
 
 # ======================
-# ⏱️ TIMER ENTRADA (60s)
+# ⏱️ TIMER ENTRADA
 # ======================
 def timer_entrada():
     return 60 - (int(time.time()) % 60)
@@ -106,7 +103,13 @@ def pegar_dados(ativo):
     ).as_pandas()
 
     df = df[::-1].reset_index()
-    df["datetime"] = pd.to_datetime(df["datetime"])
+
+    # ======================
+    # 🧠 CORREÇÃO DE FUSO HORÁRIO
+    # ======================
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    df["datetime"] = df["datetime"].dt.tz_localize("UTC")
+    df["datetime"] = df["datetime"].dt.tz_convert("America/Sao_Paulo")
 
     for c in ["open","high","low","close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -243,7 +246,7 @@ def grafico(df, ativo):
     ))
 
     fig.update_layout(
-        title=f"{ativo} - 5M Live",
+        title=f"{ativo} - 5M Live (BR Time)",
         template="plotly_dark",
         height=420,
         xaxis_rangeslider_visible=False
@@ -285,11 +288,11 @@ if news_level == "🔴 ALTO RISCO":
     st.stop()
 
 # ======================
-# 📊 PAINEL
+# 📊 PAINEL ATIVOS
 # ======================
 for i, ativo in enumerate(ativos):
 
-    st.markdown("---")  # 🔥 separação dos ativos
+    st.markdown("---")
 
     df = dados[ativo]
 
@@ -303,7 +306,7 @@ for i, ativo in enumerate(ativos):
 
     st.plotly_chart(grafico(df, ativo), use_container_width=True)
 
-    # 🔥 TIMER ENTRADA
+    # TIMER ENTRADA
     if sinal in ["COMPRA", "VENDA"]:
         st.warning(f"⏱ ENTRE AGORA - expira em {timer_entrada()}s")
 
