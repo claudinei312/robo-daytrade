@@ -25,14 +25,6 @@ body { background-color: #0b0f19; }
     margin-bottom: 15px;
 }
 
-.card {
-    background: #111827;
-    padding: 12px;
-    border-radius: 12px;
-    border: 1px solid #1f2937;
-    margin-bottom: 10px;
-}
-
 div[data-testid="stMetric"] {
     background-color: #0f172a;
     border-radius: 10px;
@@ -84,9 +76,6 @@ def tempo_candle():
     segundo = agora.second
     return f"{4 - minuto:02d}:{59 - segundo:02d}"
 
-def timer_entrada():
-    return 60 - (int(time.time()) % 60)
-
 # ======================
 # 📥 DADOS
 # ======================
@@ -111,20 +100,7 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 📰 NOTÍCIAS
-# ======================
-@st.cache_data(ttl=300)
-def noticias():
-
-    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
-
-    try:
-        return requests.get(url).json()["articles"]
-    except:
-        return []
-
-# ======================
-# 🧠 ESTRATÉGIA
+# 🧠 ESTRATÉGIA (SEM ALTERAÇÃO)
 # ======================
 def analisar(df):
 
@@ -171,7 +147,7 @@ if "sinais" not in st.session_state:
 dados = {ativo: pegar_dados(ativo) for ativo in ativos}
 
 # ======================
-# 📊 LOOP PRINCIPAL
+# 📊 LOOP
 # ======================
 for ativo in ativos:
 
@@ -190,8 +166,9 @@ for ativo in ativos:
 
             st.session_state.sinais[ativo] = {
                 "tipo": sinal,
-                "entrada": agora,
-                "preco": preco
+                "entrada_hora": agora,
+                "preco_entrada": preco,
+                "preco_saida": alvo
             }
 
             agora_txt = agora.strftime("%H:%M:%S")
@@ -199,8 +176,11 @@ for ativo in ativos:
             telegram(f"""
 📊 SINAL {ativo}
 Direção: {sinal}
-Preço: {preco}
-🟢 Entrada: {agora_txt}
+
+💰 Entrada: {preco}
+🎯 Saída: {alvo}
+
+🟢 Hora entrada: {agora_txt}
 🔴 Saída estimada: +5min
 """)
 
@@ -227,26 +207,28 @@ Preço: {preco}
     st.plotly_chart(fig, use_container_width=True)
 
     # ======================
-    # SINAL NA TELA
+    # PAINEL DO SINAL
     # ======================
     info = st.session_state.sinais.get(ativo, None)
 
     if info:
 
-        entrada = info["entrada"]
+        entrada = info["entrada_hora"]
         saida = entrada + datetime.timedelta(minutes=5)
 
         st.markdown("### 📊 SINAL DO ATIVO")
 
         st.write(f"📌 Direção: {info['tipo']}")
-        st.write(f"🟢 Entrada confirmada: {entrada.strftime('%H:%M:%S')}")
-        st.write(f"🔴 Saída estimada: {saida.strftime('%H:%M:%S')}")
+        st.write(f"💰 Preço de entrada: {info['preco_entrada']}")
+        st.write(f"🎯 Preço de saída: {info['preco_saida']}")
+        st.write(f"🟢 Hora entrada: {entrada.strftime('%H:%M:%S')}")
+        st.write(f"🔴 Hora saída: {saida.strftime('%H:%M:%S')}")
 
     else:
         st.info("📌 Possível entrada: AGUARDAR")
 
     # ======================
-    # ALERTA VISUAL
+    # ALERTA
     # ======================
     if sinal == "COMPRA":
         st.success("🟢 COMPRA")
