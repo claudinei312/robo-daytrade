@@ -36,10 +36,11 @@ def pegar_dados():
     df = df[::-1].reset_index()
     df["datetime"] = pd.to_datetime(df["datetime"])
 
-    for c in ["open","high","low","close"]:
+    for c in ["open", "high", "low", "close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    return df.dropna()
+    df = df.dropna().reset_index(drop=True)
+    return df
 
 # ======================
 # TENDÊNCIA
@@ -73,15 +74,13 @@ def zonas(df):
 
 def analisar(df):
 
+    df = df.dropna()
+
     df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
     df["RSI"] = RSIIndicator(df["close"], 14).rsi()
-
-    macd = MACD(df["close"])
-    df["macd"] = macd.macd()
-
-    adx = ADXIndicator(df["high"], df["low"], df["close"], 14)
-    df["adx"] = adx.adx()
+    df["macd"] = MACD(df["close"]).macd()
+    df["adx"] = ADXIndicator(df["high"], df["low"], df["close"], 14).adx()
 
     preco = df["close"].iloc[-1]
 
@@ -92,10 +91,13 @@ def analisar(df):
     erros = []
 
     # ======================
-    # 🚨 FILTRO LATERALIDADE (NOVO)
+    # ADX (FILTRO DE SEGURANÇA)
     # ======================
 
     adx_val = df["adx"].iloc[-1]
+
+    if pd.isna(adx_val):
+        return "AGUARDAR", preco, None, None, ["ADX inválido"]
 
     if adx_val < 20:
         return "AGUARDAR", preco, None, None, ["Mercado lateral (ADX baixo)"]
@@ -121,7 +123,7 @@ def analisar(df):
         erros.append("EMA contra")
 
     # ======================
-    # RSI (MANTIDO COMO FILTRO SUAVE)
+    # RSI (OPÇÃO 3)
     # ======================
 
     rsi = df["RSI"].iloc[-1]
@@ -130,13 +132,13 @@ def analisar(df):
         if 50 <= rsi <= 70:
             score += 1
         else:
-            erros.append(f"RSI fora zona compra ({rsi:.2f})")
+            erros.append(f"RSI fora compra ({rsi:.2f})")
 
     elif trend == "BAIXA":
         if 30 <= rsi <= 50:
             score += 1
         else:
-            erros.append(f"RSI fora zona venda ({rsi:.2f})")
+            erros.append(f"RSI fora venda ({rsi:.2f})")
 
     # ======================
     # MACD
@@ -173,7 +175,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST
+# BACKTEST (CORRIGIDO)
 # ======================
 
 def backtest(df):
@@ -182,7 +184,9 @@ def backtest(df):
     loss = 0
     erros_log = []
 
-    for i in range(200, len(df)-1):
+    df = df.dropna().reset_index(drop=True)
+
+    for i in range(200, len(df) - 2):
 
         hora = df["datetime"].iloc[i].hour
 
@@ -197,7 +201,7 @@ def backtest(df):
             continue
 
         entrada = df["close"].iloc[i]
-        saida = df["close"].iloc[i+1]
+        saida = df["close"].iloc[i + 1]
 
         if sinal == "COMPRA":
             if saida > entrada:
@@ -206,7 +210,7 @@ def backtest(df):
                 loss += 1
                 erros_log.extend(erros)
 
-        if sinal == "VENDA":
+        elif sinal == "VENDA":
             if saida < entrada:
                 wins += 1
             else:
@@ -251,6 +255,10 @@ st.subheader("⚠️ Motivos para não entrar forte")
 
 for e in erros:
     st.write("-", e)
+
+# ======================
+# BACKTEST
+# ======================
 
 if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
 
