@@ -41,24 +41,35 @@ st.markdown("<div class='main-title'>📊 SNIPER PRO TRADING DESK</div>", unsafe
 # ======================
 API_KEY = st.secrets["API_KEY"]
 NEWS_API = st.secrets["NEWS_API"]
+
+# ⚠️ FIX TELEGRAM (SEU DADO)
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
-CHAT_ID = st.secrets["CHAT_ID"]
+CHAT_ID = "7794049342"
 
 td = TDClient(apikey=API_KEY)
 
 # ======================
-# 🧠 CONFIG DINÂMICA (AUTO OTIMIZAÇÃO)
+# 📩 TELEGRAM (CORRIGIDO + DEBUG)
 # ======================
-def carregar_config():
-    try:
-        with open("config.json", "r") as f:
-            return json.load(f)
-    except:
-        return {"ma_fast": 9, "ma_slow": 21}
+def telegram(msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-cfg = carregar_config()
-MA_FAST = cfg["ma_fast"]
-MA_SLOW = cfg["ma_slow"]
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": msg
+    }
+
+    try:
+        r = requests.post(url, data=payload, timeout=10)
+
+        # 🔥 DEBUG IMPORTANTE
+        if r.status_code != 200:
+            st.error(f"Erro Telegram: {r.text}")
+
+        print("Telegram status:", r.status_code, r.text)
+
+    except Exception as e:
+        print("Erro Telegram:", e)
 
 # ======================
 # 🎯 ATIVO FOCADO
@@ -76,16 +87,6 @@ if not rodando:
     st.stop()
 
 # ======================
-# 📩 TELEGRAM
-# ======================
-def telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-    except:
-        pass
-
-# ======================
 # ⏱️ TIMER
 # ======================
 def tempo_candle():
@@ -93,17 +94,6 @@ def tempo_candle():
     minuto = agora.minute % 5
     segundo = agora.second
     return f"{4 - minuto:02d}:{59 - segundo:02d}"
-
-# ======================
-# 📰 NOTÍCIAS
-# ======================
-@st.cache_data(ttl=300)
-def noticias():
-    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR JPY&language=en&pageSize=5&apiKey={NEWS_API}"
-    try:
-        return requests.get(url).json().get("articles", [])
-    except:
-        return []
 
 # ======================
 # 📥 DADOS
@@ -119,22 +109,18 @@ def pegar_dados(ativo):
 
     df = df[::-1].reset_index()
 
-    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    df["datetime"] = df["datetime"].dt.tz_localize("UTC")
-    df["datetime"] = df["datetime"].dt.tz_convert("America/Sao_Paulo")
-
     for c in ["open","high","low","close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df.dropna()
 
 # ======================
-# 🧠 ESTRATÉGIA (MANTIDA + OTIMIZADA)
+# 🧠 ESTRATÉGIA
 # ======================
 def analisar(df):
 
-    df["MA9"] = SMAIndicator(df["close"], MA_FAST).sma_indicator()
-    df["MA21"] = SMAIndicator(df["close"], MA_SLOW).sma_indicator()
+    df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
+    df["MA21"] = SMAIndicator(df["close"], 21).sma_indicator()
 
     preco = df["close"].iloc[-1]
     ma9 = df["MA9"].iloc[-1]
@@ -165,7 +151,7 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 ESTADO GLOBAL
+# 🧠 ESTADO
 # ======================
 if "sinais" not in st.session_state:
     st.session_state.sinais = {}
@@ -174,23 +160,18 @@ if "ultimo_status" not in st.session_state:
     st.session_state.ultimo_status = {}
 
 # ======================
-# 📥 DADOS
+# 📥 LOOP
 # ======================
 dados = {ativo: pegar_dados(ativo) for ativo in ativos}
 
-# ======================
-# 📊 LOOP PRINCIPAL
-# ======================
 for ativo in ativos:
-
-    st.markdown("---")
 
     df = dados[ativo]
     sinal, preco, stop, alvo = analisar(df)
     agora = datetime.datetime.now()
 
     # ======================
-    # 🚨 SINAL
+    # 🚨 SINAL TELEGRAM (CORRIGIDO)
     # ======================
     if sinal in ["COMPRA", "VENDA"]:
 
@@ -216,7 +197,7 @@ for ativo in ativos:
 """)
 
     # ======================
-    # ⏱ STATUS
+    # 📊 STATUS
     # ======================
     ultimo = st.session_state.ultimo_status.get(ativo)
 
@@ -232,66 +213,14 @@ for ativo in ativos:
 📈 Sinal: {sinal}
 """)
 
-    # ======================
-    # 📊 VISUAL
-    # ======================
     st.subheader(ativo)
-
     st.metric("Preço", preco)
     st.info(f"⏱ Candle fecha em: {tempo_candle()}")
 
-    fig = go.Figure()
-
-    fig.add_trace(go.Candlestick(
-        x=df["datetime"],
-        open=df["open"],
-        high=df["high"],
-        low=df["low"],
-        close=df["close"]
-    ))
-
-    fig.update_layout(template="plotly_dark", height=420, xaxis_rangeslider_visible=False)
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ======================
-    # 📌 SINAL ATUAL
-    # ======================
-    info = st.session_state.sinais.get(ativo, None)
-
-    if info:
-
-        entrada = info["entrada_hora"]
-        saida = entrada + datetime.timedelta(minutes=5)
-
-        st.markdown("### 📊 SINAL ATUAL")
-
-        st.write(f"📌 Direção: {info['tipo']}")
-        st.write(f"💰 Entrada: {info['preco_entrada']}")
-        st.write(f"🎯 Saída: {info['preco_saida']}")
-        st.write(f"🟢 Entrada: {entrada.strftime('%H:%M:%S')}")
-        st.write(f"🔴 Saída: {saida.strftime('%H:%M:%S')}")
-
-    else:
-        st.info("📌 AGUARDANDO OPORTUNIDADE")
-
-    # ======================
-    # ALERTA
-    # ======================
+    # ALERTA VISUAL
     if sinal == "COMPRA":
         st.success("🟢 COMPRA")
-
     elif sinal == "VENDA":
         st.error("🔴 VENDA")
-
     else:
         st.info("⚪ AGUARDAR")
-
-# ======================
-# 📰 NOTÍCIAS
-# ======================
-st.divider()
-st.subheader("📰 Notícias")
-
-for n in noticias():
-    st.write("🗞️", n["title"])
