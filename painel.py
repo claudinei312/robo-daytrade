@@ -43,13 +43,13 @@ def pegar_dados(ativo):
 
     df["datetime"] = pd.to_datetime(df["datetime"])
 
-    for c in ["open","high","low","close"]:
+    for c in ["open", "high", "low", "close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df.dropna()
 
 # ======================
-# 🧠 ESTRATÉGIA NOVA (PROFISSIONAL)
+# 🧠 ESTRATÉGIA (OTIMIZADA)
 # ======================
 
 def analisar(df):
@@ -67,10 +67,9 @@ def analisar(df):
     suporte = df["low"].rolling(30).min().iloc[-1]
     resistencia = df["high"].rolling(30).max().iloc[-1]
 
-    # 🔥 FORÇA DE TENDÊNCIA (EVITA LATERAL)
+    # 🔥 tendência forte real
     tendencia_forte = abs(ema9 - ema21) > (preco * 0.001)
 
-    # 📊 DIREÇÃO
     alta = ema9 > ema21
     baixa = ema9 < ema21
 
@@ -79,85 +78,122 @@ def analisar(df):
     rng = df["high"].iloc[-1] - df["low"].iloc[-1]
     candle_ok = body > rng * 0.65
 
-    # 📉 RSI extremos (evita entradas ruins)
+    # 📉 RSI filtro
     rsi_buy_ok = rsi < 65
     rsi_sell_ok = rsi > 35
 
-    # ❌ FILTRO DE LATERAL
+    # ❌ filtro lateral
     if not tendencia_forte or not candle_ok:
-        return "AGUARDAR", preco, 0, 0, "Lateral ou sem força"
+        return "AGUARDAR", preco, 0, 0, "Lateral / sem força"
 
     # 🟢 COMPRA
     if alta and preco <= suporte * 1.002 and rsi_buy_ok:
         alvo = preco + (preco - suporte) * 2
-        return "COMPRA", preco, suporte, alvo, "Pullback tendência alta"
+        stop = suporte
+        return "COMPRA", preco, stop, alvo, "Pullback tendência alta"
 
     # 🔴 VENDA
     if baixa and preco >= resistencia * 0.998 and rsi_sell_ok:
         alvo = preco - (resistencia - preco) * 2
-        return "VENDA", preco, resistencia, alvo, "Rejeição resistência"
+        stop = resistencia
+        return "VENDA", preco, stop, alvo, "Rejeição resistência"
 
     return "AGUARDAR", preco, 0, 0, "Sem setup"
 
 # ======================
-# 📊 BACKTEST 30 DIAS
+# 📊 BACKTEST 30 DIAS (CORRIGIDO)
 # ======================
 
 def backtest(df):
+
+    df = df.copy()
 
     df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
     df["RSI"] = RSIIndicator(df["close"], 14).rsi()
 
-    df = df.dropna()
+    df = df.dropna().reset_index(drop=True)
 
     wins = 0
     losses = 0
+
     erros = {
         "lateral": 0,
         "sem_tendencia": 0,
-        "stop_hit": 0,
-        "ruido": 0
+        "entrada_ruim": 0
     }
+
+    in_trade = False
+    direction = None
+    target = 0
+    stop = 0
 
     for i in range(100, len(df)):
 
+        hora = df.loc[i, "datetime"].hour
+
+        # 🎯 FILTRO 8h–12h
+        if hora < 8 or hora > 12:
+            continue
+
         sub = df.iloc[:i]
 
-        sinal, preco, stop, alvo, motivo = analisar(sub)
+        sinal, preco, stop_calc, alvo, motivo = analisar(sub)
 
-        if sinal == "AGUARDAR":
-            if motivo == "Lateral ou sem força":
-                erros["lateral"] += 1
-            continue
+        # ======================
+        # 🔴 GERENCIAMENTO
+        # ======================
 
-        # simulação simples realista
-        future = df.iloc[i:i+6]
+        if in_trade:
 
-        if len(future) == 0:
-            continue
+            high = df.loc[i, "high"]
+            low = df.loc[i, "low"]
 
-        if sinal == "COMPRA":
-            if future["high"].max() >= alvo:
-                wins += 1
-            else:
-                losses += 1
+            if direction == "COMPRA":
 
-        if sinal == "VENDA":
-            if future["low"].min() <= alvo:
-                wins += 1
-            else:
-                losses += 1
+                if high >= target:
+                    wins += 1
+                    in_trade = False
+                    continue
+
+                if low <= stop:
+                    losses += 1
+                    in_trade = False
+                    continue
+
+            if direction == "VENDA":
+
+                if low <= target:
+                    wins += 1
+                    in_trade = False
+                    continue
+
+                if high >= stop:
+                    losses += 1
+                    in_trade = False
+                    continue
+
+        # ======================
+        # 🟡 ENTRADA
+        # ======================
+
+        if not in_trade:
+
+            if sinal == "AGUARDAR":
+
+                if motivo == "Lateral / sem força":
+                    erros["lateral"] += 1
+                else:
+                    erros["sem_tendencia"] += 1
+
+                continue
+
+            in_trade = True
+            direction = sinal
+            target = alvo
+            stop = stop_calc
 
     return wins, losses, erros
-
-# ======================
-# 📊 NOTÍCIAS (SIMPLES)
-# ======================
-
-st.subheader("📰 Notícias (impacto geral)")
-
-st.info("Notícias podem influenciar volatilidade — evite operar em eventos fortes.")
 
 # ======================
 # 📊 DASHBOARD
@@ -169,12 +205,16 @@ for ativo in ativos:
 
     sinal, preco, stop, alvo, motivo = analisar(df)
 
-    st.subheader(ativo)
-    st.metric("Preço", preco)
+    st.subheader(f"📊 {ativo}")
 
-    st.write("📌 Motivo:", motivo)
+    st.metric("Preço atual", preco)
 
-    # gráfico
+    st.write("📌 Status:", motivo)
+
+    # ======================
+    # 📈 GRÁFICO
+    # ======================
+
     fig = go.Figure()
 
     fig.add_trace(go.Candlestick(
@@ -189,6 +229,10 @@ for ativo in ativos:
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # ======================
+    # 📊 SINAL
+    # ======================
+
     if sinal == "COMPRA":
         st.success("🟢 COMPRA")
 
@@ -199,10 +243,10 @@ for ativo in ativos:
         st.warning("⚪ AGUARDAR")
 
 # ======================
-# 📊 BACKTEST 30 DIAS BOTÃO
+# 📊 BACKTEST BOTÃO
 # ======================
 
-if st.button("📊 Backtest 30 dias (profissional)"):
+if st.button("📊 Rodar Backtest 30 dias (8h–12h)"):
 
     df = pegar_dados(ativos[0])
 
@@ -211,13 +255,13 @@ if st.button("📊 Backtest 30 dias (profissional)"):
     total = w + l
 
     st.success(f"""
-📊 RESULTADO BACKTEST (30 dias)
+📊 RESULTADO BACKTEST 30 DIAS
 
 ✔ Wins: {w}
 ❌ Loss: {l}
-📈 Win rate: {round((w/total)*100,2) if total>0 else 0}%
+📈 Win Rate: {round((w/total)*100,2) if total>0 else 0}%
 
-⚠️ ERROS DETECTADOS:
+📉 ERROS:
 - Lateral: {erros['lateral']}
 - Sem tendência: {erros['sem_tendencia']}
 """)
