@@ -11,15 +11,18 @@ from datetime import datetime
 API_KEY = st.secrets["API_KEY"]
 NEWS_API = st.secrets["NEWS_API"]
 
+BOT_TOKEN = st.secrets["BOT_TOKEN"]
+CHAT_ID = st.secrets["CHAT_ID"]
+
 td = TDClient(apikey=API_KEY)
 
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
 st.set_page_config(layout="wide")
-st.title("📊 ROBÔ DAY TRADE V2 (LUCRATIVO)")
+st.title("📊 ROBÔ SNIPER FINAL + TELEGRAM")
 
 # ======================
-# 🟢 BOTÃO LIGA / DESLIGA
+# 🟢 LIGA / DESLIGA
 # ======================
 rodando = st.toggle("🟢 Ativar Robô", value=True)
 
@@ -28,21 +31,14 @@ if not rodando:
     st.stop()
 
 # ======================
-# 🕐 PRÓXIMA VELA M5
+# 📩 TELEGRAM
 # ======================
-def proxima_vela_m5():
-    agora = datetime.now()
-
-    minuto = (agora.minute // 5 + 1) * 5
-    hora = agora.hour
-
-    if minuto == 60:
-        minuto = 0
-        hora += 1
-
-    return agora.replace(hour=hora, minute=minuto, second=0, microsecond=0)
-
-entrada = proxima_vela_m5()
+def telegram(msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    try:
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+    except:
+        pass
 
 # ======================
 # 📥 DADOS
@@ -55,9 +51,11 @@ def pegar_dados(ativo):
         outputsize=300
     ).as_pandas()
 
-    df = df[::-1].reset_index(drop=True)
+    df = df[::-1].reset_index()
 
-    for c in ["open", "high", "low", "close"]:
+    df["datetime"] = pd.to_datetime(df["datetime"])
+
+    for c in ["open","high","low","close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df.dropna()
@@ -66,17 +64,35 @@ def pegar_dados(ativo):
 # 📰 NOTÍCIAS
 # ======================
 @st.cache_data(ttl=300)
-def pegar_noticias():
-    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&sortBy=publishedAt&pageSize=5&apiKey={NEWS_API}"
+def noticias():
+    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
     try:
         return requests.get(url).json()["articles"]
     except:
         return []
 
 # ======================
-# 🧠 LÓGICA V2 (PROFISSIONAL)
+# 🧠 AVALIAÇÃO DO ATIVO
+# ======================
+def avaliar_ativo(df):
+
+    volatilidade = df["high"].rolling(20).max().iloc[-1] - df["low"].rolling(20).min().iloc[-1]
+
+    movimento = abs(df["close"].iloc[-1] - df["close"].iloc[-20])
+
+    if volatilidade < df["close"].iloc[-1] * 0.001:
+        return "RUIM"
+
+    if movimento < df["close"].iloc[-1] * 0.002:
+        return "RUIM"
+
+    return "BOM"
+
+# ======================
+# 🧠 LÓGICA SNIPER V3
 # ======================
 def analisar(df):
+
     df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
     df["MA21"] = SMAIndicator(df["close"], 21).sma_indicator()
 
@@ -87,45 +103,25 @@ def analisar(df):
     suporte = df["low"].rolling(20).min().iloc[-1]
     resistencia = df["high"].rolling(20).max().iloc[-1]
 
-    # ======================
-    # 📉 FILTROS PROFISSIONAIS
-    # ======================
-    tendencia_forte = abs(ma9 - ma21) > 0.00025
+    # filtros
+    tendencia = abs(ma9 - ma21) > 0.00025
 
-    candle_body = abs(df["close"].iloc[-1] - df["open"].iloc[-1])
-    candle_range = df["high"].iloc[-1] - df["low"].iloc[-1]
+    body = abs(df["close"].iloc[-1] - df["open"].iloc[-1])
+    rng = df["high"].iloc[-1] - df["low"].iloc[-1]
 
-    forca_candle = candle_body > (candle_range * 0.6)
+    candle_forte = body > rng * 0.6
 
-    lateral = abs(ma9 - ma21) < 0.00015
+    volatilidade = df["high"].rolling(10).max().iloc[-1] - df["low"].rolling(10).min().iloc[-1]
+    vol_ok = volatilidade > preco * 0.0005
 
-    # ======================
-    # ⚪ AGUARDAR
-    # ======================
-    if lateral or not tendencia_forte or not forca_candle:
+    if not tendencia or not candle_forte or not vol_ok:
         return "AGUARDAR", preco, 0, 0
 
-    # ======================
-    # 🟡 ALERTA
-    # ======================
-    if ma9 > ma21 and preco <= suporte * 1.003:
-        return "ALERTA_COMPRA", preco, 0, 0
-
-    if ma9 < ma21 and preco >= resistencia * 0.997:
-        return "ALERTA_VENDA", preco, 0, 0
-
-    # ======================
-    # 🟢 ENTRADA REAL
-    # ======================
     if ma9 > ma21 and preco <= suporte * 1.001:
-        stop = suporte
-        alvo = preco + (preco - stop) * 2
-        return "COMPRA", preco, stop, alvo
+        return "COMPRA", preco, suporte, preco + (preco - suporte) * 2
 
     if ma9 < ma21 and preco >= resistencia * 0.999:
-        stop = resistencia
-        alvo = preco - (stop - preco) * 2
-        return "VENDA", preco, stop, alvo
+        return "VENDA", preco, resistencia, preco - (resistencia - preco) * 2
 
     return "AGUARDAR", preco, 0, 0
 
@@ -135,37 +131,40 @@ def analisar(df):
 col1, col2, col3 = st.columns(3)
 
 for i, ativo in enumerate(ativos):
+
     with [col1, col2, col3][i]:
+
         st.subheader(ativo)
 
         df = pegar_dados(ativo)
 
-        if df is not None:
-            sinal, preco, stop, alvo = analisar(df)
+        status = avaliar_ativo(df)
 
-            st.metric("Preço", f"{preco:.5f}")
+        sinal, preco, stop, alvo = analisar(df)
 
-            # ======================
-            # VISUAL DOS SINAIS
-            # ======================
-            if sinal == "AGUARDAR":
-                st.info("⚪ AGUARDAR")
+        st.metric("Preço", preco)
 
-            elif "ALERTA" in sinal:
-                st.warning("🟡 " + sinal)
-                st.write("📍 Preparar entrada:", entrada.strftime("%H:%M"))
+        # ❌ ativo ruim
+        if status == "RUIM":
+            st.error("❌ ATIVO RUIM HOJE")
+            telegram(f"❌ {ativo} RUIM hoje - evitar operações")
+            continue
 
-            elif sinal == "COMPRA":
-                st.success("🟢 COMPRA CONFIRMADA")
-                st.write("📍 Entrada:", entrada.strftime("%H:%M"))
-                st.write("🛑 Stop:", stop)
-                st.write("🎯 Alvo:", alvo)
+        # ⚪ aguardar
+        if sinal == "AGUARDAR":
+            st.info("⚪ AGUARDAR")
 
-            elif sinal == "VENDA":
-                st.error("🔴 VENDA CONFIRMADA")
-                st.write("📍 Entrada:", entrada.strftime("%H:%M"))
-                st.write("🛑 Stop:", stop)
-                st.write("🎯 Alvo:", alvo)
+        # 🟢 compra
+        elif sinal == "COMPRA":
+            st.success("🟢 COMPRA")
+            st.write("SL:", stop, "TP:", alvo)
+            telegram(f"🟢 COMPRA {ativo} | {preco} | SL {stop} | TP {alvo}")
+
+        # 🔴 venda
+        elif sinal == "VENDA":
+            st.error("🔴 VENDA")
+            st.write("SL:", stop, "TP:", alvo)
+            telegram(f"🔴 VENDA {ativo} | {preco} | SL {stop} | TP {alvo}")
 
 # ======================
 # 📰 NOTÍCIAS
@@ -173,5 +172,5 @@ for i, ativo in enumerate(ativos):
 st.divider()
 st.subheader("📰 Notícias Forex")
 
-for n in pegar_noticias():
+for n in noticias():
     st.write("🗞️", n["title"])
