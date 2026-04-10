@@ -128,15 +128,25 @@ def analisar(df):
         erros.append("EMA contra")
 
     # ======================
-    # RSI FORÇA
+    # RSI MELHORADO (ÚNICA ALTERAÇÃO)
     # ======================
     rsi_atual = df["RSI"].iloc[-1]
     rsi_anterior = df["RSI"].iloc[-2]
 
-    if rsi_atual > 55 and rsi_atual > rsi_anterior:
+    if rsi_atual > 60 and rsi_atual > rsi_anterior:
         score += 1
+
+    elif rsi_anterior < 30 and rsi_atual > 30:
+        score += 1
+
+    elif rsi_atual < 40 and rsi_atual < rsi_anterior:
+        score -= 1
+
+    elif rsi_anterior > 70 and rsi_atual < 70:
+        score -= 1
+
     else:
-        erros.append("RSI fraco")
+        erros.append("RSI neutro ou fraco")
 
     # ======================
     # MACD
