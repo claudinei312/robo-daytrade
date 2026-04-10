@@ -2,7 +2,7 @@ import streamlit as st
 from twelvedata import TDClient
 import pandas as pd
 import plotly.graph_objects as go
-from ta.trend import EMAIndicator, MACD
+from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.momentum import RSIIndicator
 import datetime
 
@@ -46,8 +46,8 @@ def pegar_dados():
 # ======================
 
 def tendencia(df):
-    df["EMA50"] = EMAIndicator(df["close"],50).ema_indicator()
-    df["EMA200"] = EMAIndicator(df["close"],200).ema_indicator()
+    df["EMA50"] = EMAIndicator(df["close"], 50).ema_indicator()
+    df["EMA200"] = EMAIndicator(df["close"], 200).ema_indicator()
 
     if df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1]:
         return "ALTA"
@@ -73,12 +73,15 @@ def zonas(df):
 
 def analisar(df):
 
-    df["EMA9"] = EMAIndicator(df["close"],9).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
-    df["RSI"] = RSIIndicator(df["close"],14).rsi()
+    df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
+    df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
+    df["RSI"] = RSIIndicator(df["close"], 14).rsi()
 
     macd = MACD(df["close"])
     df["macd"] = macd.macd()
+
+    adx = ADXIndicator(df["high"], df["low"], df["close"], 14)
+    df["adx"] = adx.adx()
 
     preco = df["close"].iloc[-1]
 
@@ -87,6 +90,15 @@ def analisar(df):
 
     score = 0
     erros = []
+
+    # ======================
+    # 🚨 FILTRO LATERALIDADE (NOVO)
+    # ======================
+
+    adx_val = df["adx"].iloc[-1]
+
+    if adx_val < 20:
+        return "AGUARDAR", preco, None, None, ["Mercado lateral (ADX baixo)"]
 
     # ======================
     # CONTEXTO
@@ -109,7 +121,7 @@ def analisar(df):
         erros.append("EMA contra")
 
     # ======================
-    # 🔥 RSI (OPÇÃO 3 APLICADA)
+    # RSI (MANTIDO COMO FILTRO SUAVE)
     # ======================
 
     rsi = df["RSI"].iloc[-1]
@@ -118,16 +130,13 @@ def analisar(df):
         if 50 <= rsi <= 70:
             score += 1
         else:
-            erros.append(f"RSI fora da zona de compra ({rsi:.2f})")
+            erros.append(f"RSI fora zona compra ({rsi:.2f})")
 
     elif trend == "BAIXA":
         if 30 <= rsi <= 50:
             score += 1
         else:
-            erros.append(f"RSI fora da zona de venda ({rsi:.2f})")
-
-    else:
-        erros.append("RSI ignorado (mercado lateral)")
+            erros.append(f"RSI fora zona venda ({rsi:.2f})")
 
     # ======================
     # MACD
@@ -142,7 +151,7 @@ def analisar(df):
     # SUPORTE
     # ======================
 
-    if abs(preco - sup) < (res - sup)*0.3:
+    if abs(preco - sup) < (res - sup) * 0.3:
         score += 1
     else:
         erros.append("Longe do suporte")
