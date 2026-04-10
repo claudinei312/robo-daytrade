@@ -18,10 +18,6 @@ st.title("🤖 Robô apenas")
 
 ATIVO = "EUR/USD"
 
-# ======================
-# BOTÃO ATUALIZAR
-# ======================
-
 if st.button("🔄 Atualizar dados"):
     st.rerun()
 
@@ -60,19 +56,40 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# SUPORTE / RESISTÊNCIA
+# ZONAS (12H)
 # ======================
 
 def zonas(df):
-    ult = df.tail(144)  # últimas 12h (M5)
-
-    suporte = ult["low"].min()
-    resistencia = ult["high"].max()
-
-    return suporte, resistencia
+    ult = df.tail(144)
+    return ult["low"].min(), ult["high"].max()
 
 # ======================
-# ESTRATÉGIA (ATUALIZADA)
+# DETECTAR 2 TOQUES (SUPORTE REAL)
+# ======================
+
+def suporte_forte(df, suporte):
+
+    toques = 0
+
+    for i in range(len(df)-20, len(df)):
+        if abs(df["low"].iloc[i] - suporte) < (suporte * 0.001):
+            toques += 1
+
+    return toques >= 2
+
+# ======================
+# CANDLE DE REJEIÇÃO (PRICE ACTION)
+# ======================
+
+def rejeicao_candle(candle):
+
+    corpo = abs(candle["close"] - candle["open"])
+    pavio_baixo = candle["open"] - candle["low"]
+
+    return pavio_baixo > corpo * 1.5
+
+# ======================
+# ESTRATÉGIA PROFISSIONAL
 # ======================
 
 def analisar(df):
@@ -92,7 +109,9 @@ def analisar(df):
     score = 0
     erros = []
 
+    # ======================
     # CONTEXTO
+    # ======================
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -100,14 +119,16 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
+    # ======================
     # EMA
+    # ======================
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
 
     # ======================
-    # RSI (CORRIGIDO)
+    # RSI FORÇA
     # ======================
     rsi_atual = df["RSI"].iloc[-1]
     rsi_anterior = df["RSI"].iloc[-2]
@@ -115,29 +136,34 @@ def analisar(df):
     if rsi_atual > 55 and rsi_atual > rsi_anterior:
         score += 1
     else:
-        erros.append("RSI sem força")
+        erros.append("RSI fraco")
 
+    # ======================
     # MACD
+    # ======================
     if df["macd"].iloc[-1] > 0:
         score += 1
     else:
         erros.append("MACD contra")
 
     # ======================
-    # SUPORTE (CORRIGIDO)
+    # SUPORTE PROFISSIONAL
     # ======================
-    ultimo_candle = df.iloc[-1]
+    candle = df.iloc[-1]
 
-    corpo = abs(ultimo_candle["close"] - ultimo_candle["open"])
-    pavio_baixo = ultimo_candle["open"] - ultimo_candle["low"]
+    perto = abs(preco - sup) < (res - sup)*0.15
+    toque_duplo = suporte_forte(df, sup)
+    rejeicao = rejeicao_candle(candle)
 
-    rejeicao = pavio_baixo > corpo
-    distancia = abs(preco - sup)
-
-    if distancia < (res - sup)*0.15 and rejeicao:
-        score += 1
+    if perto and toque_duplo and rejeicao:
+        score += 2
     else:
-        erros.append("Sem reação no suporte")
+        if not perto:
+            erros.append("Longe do suporte")
+        if not toque_duplo:
+            erros.append("Sem 2 toques no suporte")
+        if not rejeicao:
+            erros.append("Sem rejeição do candle")
 
     # ======================
     # DECISÃO
@@ -146,16 +172,16 @@ def analisar(df):
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
 
-    if score >= 4:
+    if score >= 5:
         return "COMPRA", preco, entrada, saida, erros
 
-    if score <= -3:
+    if score <= -4:
         return "VENDA", preco, entrada, saida, erros
 
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST
+# BACKTEST INTELIGENTE
 # ======================
 
 def backtest(df):
@@ -210,35 +236,14 @@ sinal, preco, entrada, saida, erros = analisar(df)
 
 st.metric("💰 Preço atual", preco)
 
-# ======================
-# SINAL
-# ======================
-
 if sinal == "COMPRA":
-    st.success(f"""
-🟢 COMPRA
-
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
-
+    st.success(f"🟢 COMPRA\nEntrada: {entrada.strftime('%H:%M')} | Saída: {saida.strftime('%H:%M')}")
 elif sinal == "VENDA":
-    st.error(f"""
-🔴 VENDA
-
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
-
+    st.error(f"🔴 VENDA\nEntrada: {entrada.strftime('%H:%M')} | Saída: {saida.strftime('%H:%M')}")
 else:
     st.warning("⚪ AGUARDAR")
 
-# ======================
-# ERROS ATUAIS
-# ======================
-
-st.subheader("⚠️ Motivos para não entrar forte")
-
+st.subheader("⚠️ Motivos")
 for e in erros:
     st.write("-", e)
 
@@ -246,21 +251,20 @@ for e in erros:
 # BACKTEST
 # ======================
 
-if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
+if st.button("📊 Backtest 30 dias (08h às 12h)"):
 
     wins, loss, erros_log = backtest(df)
 
     total = wins + loss
     taxa = (wins / total * 100) if total > 0 else 0
 
-    st.subheader("📈 Resultado")
+    st.subheader("Resultado")
 
-    st.write("✅ Wins:", wins)
-    st.write("❌ Loss:", loss)
-    st.write(f"🎯 Assertividade: {taxa:.2f}%")
+    st.write("Wins:", wins)
+    st.write("Loss:", loss)
+    st.write(f"Assertividade: {taxa:.2f}%")
 
-    st.subheader("⚠️ Principais erros")
-
+    st.subheader("Erros mais comuns")
     for e in set(erros_log):
         st.write("-", e)
 
