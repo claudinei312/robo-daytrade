@@ -61,7 +61,9 @@ def tendencia(df):
 
 def zonas(df):
     ult = df.tail(144)
-    return ult["low"].min(), ult["high"].max()
+    suporte = ult["low"].min()
+    resistencia = ult["high"].max()
+    return suporte, resistencia
 
 # ======================
 # ESTRATÉGIA (INALTERADA)
@@ -84,6 +86,7 @@ def analisar(df):
     score = 0
     erros = []
 
+    # CONTEXTO
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -91,21 +94,25 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
+    # EMA
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
 
+    # RSI
     if df["RSI"].iloc[-1] > 50:
         score += 1
     else:
         erros.append("RSI fraco")
 
+    # MACD
     if df["macd"].iloc[-1] > 0:
         score += 1
     else:
         erros.append("MACD contra")
 
+    # SUPORTE (mantido)
     if abs(preco - sup) < (res - sup)*0.3:
         score += 1
     else:
@@ -124,7 +131,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# 🔥 BACKTEST PROFISSIONAL (SUBSTITUÍDO)
+# 🔥 BACKTEST PROFISSIONAL (ATUALIZADO)
 # ======================
 
 def backtest(df):
@@ -134,10 +141,6 @@ def backtest(df):
     trades = []
 
     df = df.copy().reset_index(drop=True)
-
-    # ======================
-    # LOOP PROFISSIONAL
-    # ======================
 
     for i in range(200, len(df) - 2):
 
@@ -153,16 +156,46 @@ def backtest(df):
         if sinal == "AGUARDAR":
             continue
 
-        # EXECUÇÃO REALISTA (SEM CLOSE FALSO)
+        # ======================
+        # FILTRO PROFISSIONAL (EXTENSÃO DE PREÇO)
+        # ======================
+
+        sup, res = zonas(sub)
+
+        preco = df["close"].iloc[i]
+
+        range_total = res - sup
+
+        if range_total == 0:
+            continue
+
+        dist_sup = preco - sup
+        dist_res = res - preco
+
+        ext_sup = dist_sup / range_total
+        ext_res = dist_res / range_total
+
+        overextended_buy = ext_sup > 0.75
+        overextended_sell = ext_res > 0.75
+
+        # bloqueio inteligente
+        if sinal == "COMPRA" and overextended_buy:
+            continue
+
+        if sinal == "VENDA" and overextended_sell:
+            continue
+
+        # ======================
+        # EXECUÇÃO REALISTA
+        # ======================
+
         entry = df["open"].iloc[i + 1]
         exit_ = df["open"].iloc[i + 2]
 
         if sinal == "COMPRA":
             result = "WIN" if exit_ > entry else "LOSS"
-        elif sinal == "VENDA":
-            result = "WIN" if exit_ < entry else "LOSS"
         else:
-            continue
+            result = "WIN" if exit_ < entry else "LOSS"
 
         if result == "WIN":
             wins += 1
