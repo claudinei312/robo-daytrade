@@ -77,6 +77,19 @@ def tempo_candle():
     return f"{4 - minuto:02d}:{59 - segundo:02d}"
 
 # ======================
+# 📰 NOTÍCIAS (CORRIGIDO)
+# ======================
+@st.cache_data(ttl=300)
+def noticias():
+
+    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
+
+    try:
+        return requests.get(url).json().get("articles", [])
+    except:
+        return []
+
+# ======================
 # 📥 DADOS
 # ======================
 @st.cache_data(ttl=240)
@@ -136,7 +149,7 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 ESTADO GLOBAL
+# 🧠 ESTADO
 # ======================
 if "sinais" not in st.session_state:
     st.session_state.sinais = {}
