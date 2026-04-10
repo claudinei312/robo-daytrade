@@ -3,6 +3,7 @@ from twelvedata import TDClient
 import pandas as pd
 import requests
 from ta.trend import SMAIndicator
+from datetime import datetime
 
 # ======================
 # 🔐 CONFIG
@@ -17,11 +18,8 @@ td = TDClient(apikey=API_KEY)
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
 st.set_page_config(layout="wide")
-st.title("📊 ROBÔ SNIPER FINAL + RISCO + TELEGRAM")
+st.title("📊 ROBÔ SNIPER + BACKTEST AUTOMÁTICO")
 
-# ======================
-# 🟢 LIGA / DESLIGA
-# ======================
 rodando = st.toggle("🟢 Ativar Robô", value=True)
 
 if not rodando:
@@ -49,7 +47,6 @@ def pegar_dados(ativo):
     ).as_pandas()
 
     df = df[::-1].reset_index()
-
     df["datetime"] = pd.to_datetime(df["datetime"])
 
     for c in ["open","high","low","close"]:
@@ -58,65 +55,7 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 📰 NOTÍCIAS
-# ======================
-@st.cache_data(ttl=300)
-def noticias():
-    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
-    try:
-        return requests.get(url).json()["articles"]
-    except:
-        return []
-
-# ======================
-# 🚨 FILTRO DE RISCO
-# ======================
-def mercado_perigoso():
-
-    artigos = noticias()
-
-    palavras_risco = [
-        "interest rate",
-        "inflation",
-        "fed",
-        "crisis",
-        "war",
-        "recession"
-    ]
-
-    for a in artigos:
-        titulo = a["title"].lower()
-
-        for p in palavras_risco:
-            if p in titulo:
-                return True
-
-    return False
-
-# ======================
-# 🧠 MELHOR ATIVO DO DIA
-# ======================
-def melhor_ativo(dados):
-
-    scores = {}
-
-    for ativo, df in dados.items():
-
-        volatilidade = df["high"].rolling(20).max().iloc[-1] - df["low"].rolling(20).min().iloc[-1]
-
-        ma9 = SMAIndicator(df["close"], 9).sma_indicator().iloc[-1]
-        ma21 = SMAIndicator(df["close"], 21).sma_indicator().iloc[-1]
-
-        tendencia = abs(ma9 - ma21)
-
-        score = volatilidade + tendencia
-
-        scores[ativo] = score
-
-    return max(scores, key=scores.get)
-
-# ======================
-# 🧠 LÓGICA SNIPER
+# 🧠 SNIPER
 # ======================
 def analisar(df):
 
@@ -152,7 +91,83 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 📊 DADOS GERAIS
+# 📰 NOTÍCIAS (FILTRO RISCO)
+# ======================
+@st.cache_data(ttl=300)
+def noticias():
+    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
+    try:
+        return requests.get(url).json()["articles"]
+    except:
+        return []
+
+def mercado_perigoso():
+    palavras = ["interest rate", "inflation", "fed", "crisis", "war", "recession"]
+
+    for n in noticias():
+        titulo = n["title"].lower()
+        if any(p in titulo for p in palavras):
+            return True
+    return False
+
+# ======================
+# 🧠 MELHOR ATIVO DO DIA
+# ======================
+def melhor_ativo(dados):
+
+    scores = {}
+
+    for ativo, df in dados.items():
+
+        vol = df["high"].rolling(20).max().iloc[-1] - df["low"].rolling(20).min().iloc[-1]
+
+        ma9 = SMAIndicator(df["close"], 9).sma_indicator().iloc[-1]
+        ma21 = SMAIndicator(df["close"], 21).sma_indicator().iloc[-1]
+
+        trend = abs(ma9 - ma21)
+
+        scores[ativo] = vol + trend
+
+    return max(scores, key=scores.get)
+
+# ======================
+# 📊 BACKTEST AUTOMÁTICO 08h–12h
+# ======================
+def backtest_hoje(df):
+
+    wins = 0
+    losses = 0
+    trades = 0
+
+    for i in range(50, len(df)):
+
+        hora = df["datetime"].iloc[i].hour
+
+        if hora < 8 or hora >= 12:
+            continue
+
+        sinal, preco, stop, alvo = analisar(df)
+
+        if sinal == "COMPRA":
+            trades += 1
+            if df["high"].iloc[i:].max() >= alvo:
+                wins += 1
+            else:
+                losses += 1
+
+        if sinal == "VENDA":
+            trades += 1
+            if df["low"].iloc[i:].min() <= alvo:
+                wins += 1
+            else:
+                losses += 1
+
+    winrate = (wins / trades * 100) if trades > 0 else 0
+
+    return trades, wins, losses, winrate
+
+# ======================
+# 📥 DADOS GERAIS
 # ======================
 dados = {}
 
@@ -163,10 +178,8 @@ for ativo in ativos:
 # 🚨 BLOQUEIO POR NOTÍCIA
 # ======================
 if mercado_perigoso():
-    st.error("⚠️ MERCADO PERIGOSO (NOTÍCIAS FORTE)")
-
-    telegram("⚠️ Mercado em risco hoje - evitar operações")
-
+    st.error("⚠️ MERCADO PERIGOSO HOJE")
+    telegram("⚠️ Mercado em risco hoje (notícias fortes)")
     st.stop()
 
 # ======================
@@ -178,7 +191,7 @@ st.subheader("🏆 Melhor ativo do dia")
 st.success(best)
 
 # ======================
-# 📊 PAINEL
+# 📊 PAINEL AO VIVO
 # ======================
 col1, col2, col3 = st.columns(3)
 
@@ -197,24 +210,38 @@ for i, ativo in enumerate(ativos):
         if ativo == best:
             st.info("🔥 Melhor ativo hoje")
 
-        if sinal == "AGUARDAR":
-            st.info("⚪ AGUARDAR")
-
-        elif sinal == "COMPRA":
+        if sinal == "COMPRA":
             st.success("🟢 COMPRA")
-            st.write("SL:", stop, "TP:", alvo)
             telegram(f"🟢 COMPRA {ativo} | {preco} | SL {stop} | TP {alvo}")
 
         elif sinal == "VENDA":
             st.error("🔴 VENDA")
-            st.write("SL:", stop, "TP:", alvo)
             telegram(f"🔴 VENDA {ativo} | {preco} | SL {stop} | TP {alvo}")
 
+        else:
+            st.info("⚪ AGUARDAR")
+
 # ======================
-# 📰 NOTÍCIAS
+# 📊 BACKTEST AUTOMÁTICO (DIA)
 # ======================
 st.divider()
-st.subheader("📰 Notícias Forex")
+st.subheader("📊 BACKTEST AUTOMÁTICO 08h–12h (HOJE)")
 
-for n in noticias():
-    st.write("🗞️", n["title"])
+for ativo in ativos:
+
+    df = dados[ativo]
+
+    trades, wins, losses, winrate = backtest_hoje(df)
+
+    st.write(f"""
+    **{ativo}**  
+    Trades: {trades}  
+    Wins: {wins}  
+    Losses: {losses}  
+    Winrate: {winrate:.2f}%  
+    """)
+
+    if winrate > 55:
+        st.success("🟢 DIA BOM PARA ESSE ATIVO")
+    else:
+        st.warning("⚠️ DIA FRACO PARA ESSE ATIVO")
