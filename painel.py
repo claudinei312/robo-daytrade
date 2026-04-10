@@ -8,14 +8,14 @@ from ta.momentum import RSIIndicator
 import datetime
 
 # ======================
-# CONFIG API
+# API
 # ======================
 
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô Pro", layout="wide")
-st.title("🤖 Robô Pro Estável")
+st.set_page_config(page_title="Robô Pro Evoluído", layout="wide")
+st.title("🤖 Robô Pro Evoluído")
 
 ATIVO = "EUR/USD"
 
@@ -57,33 +57,43 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# SUPORTE / RESISTÊNCIA (2 TOQUES)
+# SUPORTE / RESISTÊNCIA BASE
 # ======================
 
-def detectar_zonas(df, tol=0.0015):
+def zonas_base(df):
+    ult = df.tail(144)
 
-    lows = df["low"].values
-    highs = df["high"].values
+    suporte = ult["low"].min()
+    resistencia = ult["high"].max()
 
-    sup_zones = []
-    res_zones = []
+    return suporte, resistencia
 
-    for i in range(len(lows)):
-        base = lows[i]
-        touches = np.sum(np.abs(lows - base) / base < tol)
+# ======================
+# REGIME DE MERCADO
+# ======================
 
-        if touches >= 2:
-            sup_zones.append(base)
+def regime_mercado(df, sup, res):
 
-    for i in range(len(highs)):
-        base = highs[i]
-        touches = np.sum(np.abs(highs - base) / base < tol)
+    preco = df["close"].iloc[-1]
 
-        if touches >= 2:
-            res_zones.append(base)
+    if preco > res:
+        return "EXPANSAO_ALTA"
 
-    suporte = np.mean(sup_zones) if len(sup_zones) > 0 else np.min(lows)
-    resistencia = np.mean(res_zones) if len(res_zones) > 0 else np.max(highs)
+    if preco < sup:
+        return "EXPANSAO_BAIXA"
+
+    return "CONSOLIDACAO"
+
+# ======================
+# NOVA ZONA (EXPANSÃO)
+# ======================
+
+def nova_zona(df):
+
+    ult = df.tail(50)
+
+    suporte = ult["low"].min()
+    resistencia = ult["high"].max()
 
     return suporte, resistencia
 
@@ -101,12 +111,21 @@ def analisar(df):
     df["MACD"] = macd.macd()
 
     preco = df["close"].iloc[-1]
-    sup, res = detectar_zonas(df)
+
+    sup_base, res_base = zonas_base(df)
     trend = tendencia(df)
+    regime = regime_mercado(df, sup_base, res_base)
+
+    # decide qual zona usar
+    if regime == "CONSOLIDACAO":
+        sup, res = sup_base, res_base
+    else:
+        sup, res = nova_zona(df)
 
     score = 0
     erros = []
 
+    # tendência
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -114,37 +133,41 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
+    # EMA
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
 
+    # RSI
     if df["RSI"].iloc[-1] > 50:
         score += 1
     else:
         erros.append("RSI fraco")
 
+    # MACD
     if df["MACD"].iloc[-1] > 0:
         score += 1
     else:
         erros.append("MACD contra")
 
-    # filtro estrutura
-    range_total = res - sup
-
-    if range_total > 0:
-        dist_sup = (preco - sup) / range_total
-        dist_res = (res - preco) / range_total
-
-        if dist_sup > 0.85:
-            erros.append("Preço esticado (resistência próxima)")
-        if dist_res > 0.85:
-            erros.append("Preço esticado (suporte próximo)")
+    # informação de regime
+    if regime == "EXPANSAO_ALTA":
+        erros.append("Expansão de alta (esperar pullback)")
+    if regime == "EXPANSAO_BAIXA":
+        erros.append("Expansão de baixa (esperar pullback)")
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
 
+    # decisão mais segura em expansão
+    if regime != "CONSOLIDACAO":
+        if score >= 3:
+            return "COMPRA" if regime == "EXPANSAO_ALTA" else "VENDA", preco, entrada, saida, erros
+        return "AGUARDAR", preco, entrada, saida, erros
+
+    # consolidação normal
     if score >= 4:
         return "COMPRA", preco, entrada, saida, erros
 
@@ -154,7 +177,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST (CORRIGIDO E ESTÁVEL)
+# BACKTEST
 # ======================
 
 def backtest(df):
@@ -165,9 +188,8 @@ def backtest(df):
 
     df = df.reset_index(drop=True)
 
-    # proteção mínima
     if len(df) < 250:
-        st.error("Poucos dados para backtest (mínimo 250 candles)")
+        st.error("Poucos dados para backtest")
         return 0, 0, []
 
     for i in range(200, len(df) - 3):
@@ -205,7 +227,8 @@ def backtest(df):
             "result": result,
             "entry": entry,
             "exit": exit_,
-            "erros": erros
+            "erros": erros,
+            "regime": regime_mercado(df.iloc[:i], *zonas_base(df.iloc[:i]))
         })
 
     return wins, loss, trades
@@ -232,7 +255,7 @@ elif sinal == "VENDA":
 else:
     st.warning("⚪ AGUARDAR")
 
-st.subheader("⚠️ Motivos de bloqueio")
+st.subheader("⚠️ Motivos de análise")
 for e in erros:
     st.write("•", e)
 
@@ -252,12 +275,6 @@ if st.button("📊 Rodar Backtest"):
     st.write("✅ Wins:", wins)
     st.write("❌ Loss:", loss)
     st.write(f"🎯 Assertividade: {taxa:.2f}%")
-
-    st.subheader("📌 Trades")
-
-    for t in trades[:15]:
-        st.write("----")
-        st.write(t)
 
 # ======================
 # GRÁFICO
