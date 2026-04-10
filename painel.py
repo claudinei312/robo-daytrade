@@ -76,7 +76,7 @@ def telegram(msg):
         pass
 
 # ======================
-# ⏱️ TIMER CANDLE
+# ⏱️ TIMER
 # ======================
 def tempo_candle():
     agora = datetime.datetime.utcnow()
@@ -84,9 +84,6 @@ def tempo_candle():
     segundo = agora.second
     return f"{4 - minuto:02d}:{59 - segundo:02d}"
 
-# ======================
-# ⏱️ TIMER ENTRADA
-# ======================
 def timer_entrada():
     return 60 - (int(time.time()) % 60)
 
@@ -104,9 +101,6 @@ def pegar_dados(ativo):
 
     df = df[::-1].reset_index()
 
-    # ======================
-    # 🧠 CORREÇÃO DE FUSO HORÁRIO
-    # ======================
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
     df["datetime"] = df["datetime"].dt.tz_localize("UTC")
     df["datetime"] = df["datetime"].dt.tz_convert("America/Sao_Paulo")
@@ -130,7 +124,7 @@ def noticias():
         return []
 
 # ======================
-# 🧠 ESTRATÉGIA (INALTERADA)
+# 🧠 ESTRATÉGIA
 # ======================
 def analisar(df):
 
@@ -166,72 +160,57 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 SCORE
+# 🧠 ESTADO GLOBAL
 # ======================
-def score_mercado(dados):
-
-    total = 0
-
-    for ativo, df in dados.items():
-
-        vol = df["high"].rolling(20).max().iloc[-1] - df["low"].rolling(20).min().iloc[-1]
-        mov = abs(df["close"].iloc[-1] - df["close"].iloc[-20])
-
-        total += vol + mov
-
-    media = total / len(dados)
-
-    if media < 0.001:
-        return "🔴 RUIM"
-    elif media < 0.003:
-        return "🟡 NEUTRO"
-    else:
-        return "🟢 BOM"
+if "sinais" not in st.session_state:
+    st.session_state.sinais = {}
 
 # ======================
-# 📰 RISCO NOTÍCIA
+# 📥 DADOS
 # ======================
-def nivel_noticia():
-
-    forte = ["fed", "interest rate", "inflation", "war", "crisis"]
-    medio = ["usd", "eur", "gbp"]
-
-    nivel = "🟢 BAIXO"
-
-    for n in noticias():
-        t = n["title"].lower()
-
-        if any(x in t for x in forte):
-            return "🔴 ALTO RISCO"
-
-        if any(x in t for x in medio):
-            nivel = "🟡 MÉDIO"
-
-    return nivel
+dados = {ativo: pegar_dados(ativo) for ativo in ativos}
 
 # ======================
-# 🏆 RANKING
+# 📊 LOOP PRINCIPAL
 # ======================
-def ranking_ativos(dados):
+for ativo in ativos:
 
-    scores = {}
+    st.markdown("---")
 
-    for ativo, df in dados.items():
+    df = dados[ativo]
+    sinal, preco, stop, alvo = analisar(df)
+    agora = datetime.datetime.now()
 
-        vol = df["high"].rolling(20).max().iloc[-1] - df["low"].rolling(20).min().iloc[-1]
-        ma9 = SMAIndicator(df["close"], 9).sma_indicator().iloc[-1]
-        ma21 = SMAIndicator(df["close"], 21).sma_indicator().iloc[-1]
+    # ======================
+    # REGISTRAR SINAL
+    # ======================
+    if sinal in ["COMPRA", "VENDA"]:
 
-        trend = abs(ma9 - ma21)
+        if ativo not in st.session_state.sinais or st.session_state.sinais[ativo]["tipo"] != sinal:
 
-        scores[ativo] = vol + trend
+            st.session_state.sinais[ativo] = {
+                "tipo": sinal,
+                "entrada": agora,
+                "preco": preco
+            }
 
-    return sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            agora_txt = agora.strftime("%H:%M:%S")
 
-# ======================
-# 📊 GRÁFICO
-# ======================
-def grafico(df, ativo):
+            telegram(f"""
+📊 SINAL {ativo}
+Direção: {sinal}
+Preço: {preco}
+🟢 Entrada: {agora_txt}
+🔴 Saída estimada: +5min
+""")
+
+    # ======================
+    # EXIBIÇÃO
+    # ======================
+    st.subheader(ativo)
+
+    st.metric("Preço", preco)
+    st.info(f"⏱ Candle fecha em: {tempo_candle()}")
 
     fig = go.Figure()
 
@@ -240,86 +219,40 @@ def grafico(df, ativo):
         open=df["open"],
         high=df["high"],
         low=df["low"],
-        close=df["close"],
-        increasing_line_color="green",
-        decreasing_line_color="red"
+        close=df["close"]
     ))
 
-    fig.update_layout(
-        title=f"{ativo} - 5M Live (BR Time)",
-        template="plotly_dark",
-        height=420,
-        xaxis_rangeslider_visible=False
-    )
+    fig.update_layout(template="plotly_dark", height=420, xaxis_rangeslider_visible=False)
 
-    return fig
+    st.plotly_chart(fig, use_container_width=True)
 
-# ======================
-# 📥 DADOS
-# ======================
-dados = {ativo: pegar_dados(ativo) for ativo in ativos}
+    # ======================
+    # SINAL NA TELA
+    # ======================
+    info = st.session_state.sinais.get(ativo, None)
 
-score = score_mercado(dados)
-news_level = nivel_noticia()
-ranking = ranking_ativos(dados)
-best = ranking[0][0]
+    if info:
 
-# ======================
-# 🧠 PAINEL GLOBAL
-# ======================
-st.subheader("🧠 INTELIGÊNCIA DO DIA")
+        entrada = info["entrada"]
+        saida = entrada + datetime.timedelta(minutes=5)
 
-st.write("📊 Mercado:", score)
-st.write("📰 Notícias:", news_level)
+        st.markdown("### 📊 SINAL DO ATIVO")
 
-st.subheader("🏆 Ranking")
+        st.write(f"📌 Direção: {info['tipo']}")
+        st.write(f"🟢 Entrada confirmada: {entrada.strftime('%H:%M:%S')}")
+        st.write(f"🔴 Saída estimada: {saida.strftime('%H:%M:%S')}")
 
-for ativo, sc in ranking:
-    st.write(f"{ativo} → {sc:.4f}")
+    else:
+        st.info("📌 Possível entrada: AGUARDAR")
 
-st.success(f"🔥 Melhor ativo: {best}")
-
-# ======================
-# 🚨 RISCO
-# ======================
-if news_level == "🔴 ALTO RISCO":
-    st.error("⚠️ MERCADO PERIGOSO")
-    telegram("⚠️ Mercado perigoso - evitar trades")
-    st.stop()
-
-# ======================
-# 📊 PAINEL ATIVOS
-# ======================
-for i, ativo in enumerate(ativos):
-
-    st.markdown("---")
-
-    df = dados[ativo]
-
-    sinal, preco, stop, alvo = analisar(df)
-
-    st.subheader(ativo)
-
-    st.metric("Preço", preco)
-
-    st.info(f"⏱ Candle fecha em: {tempo_candle()}")
-
-    st.plotly_chart(grafico(df, ativo), use_container_width=True)
-
-    # TIMER ENTRADA
-    if sinal in ["COMPRA", "VENDA"]:
-        st.warning(f"⏱ ENTRE AGORA - expira em {timer_entrada()}s")
-
-    if ativo == best:
-        st.info("🔥 Melhor ativo do dia")
-
+    # ======================
+    # ALERTA VISUAL
+    # ======================
     if sinal == "COMPRA":
         st.success("🟢 COMPRA")
-        telegram(f"🟢 COMPRA {ativo} | {preco} | SL {stop} | TP {alvo}")
 
     elif sinal == "VENDA":
         st.error("🔴 VENDA")
-        telegram(f"🔴 VENDA {ativo} | {preco} | SL {stop} | TP {alvo}")
 
     else:
         st.info("⚪ AGUARDAR")
