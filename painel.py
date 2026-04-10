@@ -3,7 +3,6 @@ from twelvedata import TDClient
 import pandas as pd
 import requests
 from ta.trend import SMAIndicator
-from datetime import datetime
 
 # ======================
 # 🔐 CONFIG
@@ -18,7 +17,7 @@ td = TDClient(apikey=API_KEY)
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
 st.set_page_config(layout="wide")
-st.title("📊 ROBÔ SNIPER + BACKTEST AUTOMÁTICO")
+st.title("📊 ROBÔ SNIPER + INTELIGÊNCIA DE MERCADO")
 
 rodando = st.toggle("🟢 Ativar Robô", value=True)
 
@@ -55,7 +54,18 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 🧠 SNIPER
+# 📰 NOTÍCIAS
+# ======================
+@st.cache_data(ttl=300)
+def noticias():
+    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
+    try:
+        return requests.get(url).json()["articles"]
+    except:
+        return []
+
+# ======================
+# 🧠 SNIPER (NÃO ALTERADO)
 # ======================
 def analisar(df):
 
@@ -91,29 +101,54 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 📰 NOTÍCIAS (FILTRO RISCO)
+# 🧠 SCORE DO MERCADO
 # ======================
-@st.cache_data(ttl=300)
-def noticias():
-    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
-    try:
-        return requests.get(url).json()["articles"]
-    except:
-        return []
+def score_mercado(dados):
 
-def mercado_perigoso():
-    palavras = ["interest rate", "inflation", "fed", "crisis", "war", "recession"]
+    total = 0
+
+    for ativo, df in dados.items():
+
+        vol = df["high"].rolling(20).max().iloc[-1] - df["low"].rolling(20).min().iloc[-1]
+
+        mov = abs(df["close"].iloc[-1] - df["close"].iloc[-20])
+
+        total += vol + mov
+
+    media = total / len(dados)
+
+    if media < 0.001:
+        return "🔴 RUIM"
+    elif media < 0.003:
+        return "🟡 NEUTRO"
+    else:
+        return "🟢 BOM"
+
+# ======================
+# 📰 NÍVEL DE NOTÍCIA
+# ======================
+def nivel_noticia():
+
+    forte = ["fed", "interest rate", "inflation", "war", "crisis"]
+    medio = ["usd", "eur", "gbp"]
+
+    nivel = "🟢 BAIXO"
 
     for n in noticias():
-        titulo = n["title"].lower()
-        if any(p in titulo for p in palavras):
-            return True
-    return False
+        t = n["title"].lower()
+
+        if any(x in t for x in forte):
+            return "🔴 ALTO RISCO"
+
+        if any(x in t for x in medio):
+            nivel = "🟡 MÉDIO"
+
+    return nivel
 
 # ======================
-# 🧠 MELHOR ATIVO DO DIA
+# 🏆 RANKING ATIVOS
 # ======================
-def melhor_ativo(dados):
+def ranking_ativos(dados):
 
     scores = {}
 
@@ -128,70 +163,48 @@ def melhor_ativo(dados):
 
         scores[ativo] = vol + trend
 
-    return max(scores, key=scores.get)
+    return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 # ======================
-# 📊 BACKTEST AUTOMÁTICO 08h–12h
+# 📥 DADOS
 # ======================
-def backtest_hoje(df):
-
-    wins = 0
-    losses = 0
-    trades = 0
-
-    for i in range(50, len(df)):
-
-        hora = df["datetime"].iloc[i].hour
-
-        if hora < 8 or hora >= 12:
-            continue
-
-        sinal, preco, stop, alvo = analisar(df)
-
-        if sinal == "COMPRA":
-            trades += 1
-            if df["high"].iloc[i:].max() >= alvo:
-                wins += 1
-            else:
-                losses += 1
-
-        if sinal == "VENDA":
-            trades += 1
-            if df["low"].iloc[i:].min() <= alvo:
-                wins += 1
-            else:
-                losses += 1
-
-    winrate = (wins / trades * 100) if trades > 0 else 0
-
-    return trades, wins, losses, winrate
+dados = {ativo: pegar_dados(ativo) for ativo in ativos}
 
 # ======================
-# 📥 DADOS GERAIS
+# 📊 INTELIGÊNCIA GLOBAL
 # ======================
-dados = {}
+score = score_mercado(dados)
+news_level = nivel_noticia()
+ranking = ranking_ativos(dados)
+best = ranking[0][0]
 
-for ativo in ativos:
-    dados[ativo] = pegar_dados(ativo)
+# ======================
+# 📩 ALERTAS
+# ======================
+st.subheader("🧠 INTELIGÊNCIA DO DIA")
+
+st.write("📊 Mercado:", score)
+st.write("📰 Notícias:", news_level)
+
+st.subheader("🏆 Ranking de ativos")
+
+for ativo, sc in ranking:
+    st.write(f"{ativo} → {sc:.4f}")
+
+st.success(f"🔥 Melhor ativo do dia: {best}")
 
 # ======================
-# 🚨 BLOQUEIO POR NOTÍCIA
+# 🚨 BLOQUEIO DE RISCO
 # ======================
-if mercado_perigoso():
-    st.error("⚠️ MERCADO PERIGOSO HOJE")
-    telegram("⚠️ Mercado em risco hoje (notícias fortes)")
+if news_level == "🔴 ALTO RISCO":
+    st.error("⚠️ MERCADO EM ALTO RISCO (NOTÍCIAS)")
+
+    telegram("⚠️ Mercado perigoso hoje - evitar operações")
+
     st.stop()
 
 # ======================
-# 🏆 MELHOR ATIVO
-# ======================
-best = melhor_ativo(dados)
-
-st.subheader("🏆 Melhor ativo do dia")
-st.success(best)
-
-# ======================
-# 📊 PAINEL AO VIVO
+# 📊 PAINEL
 # ======================
 col1, col2, col3 = st.columns(3)
 
@@ -222,26 +235,10 @@ for i, ativo in enumerate(ativos):
             st.info("⚪ AGUARDAR")
 
 # ======================
-# 📊 BACKTEST AUTOMÁTICO (DIA)
+# 📰 NOTÍCIAS
 # ======================
 st.divider()
-st.subheader("📊 BACKTEST AUTOMÁTICO 08h–12h (HOJE)")
+st.subheader("📰 Notícias")
 
-for ativo in ativos:
-
-    df = dados[ativo]
-
-    trades, wins, losses, winrate = backtest_hoje(df)
-
-    st.write(f"""
-    **{ativo}**  
-    Trades: {trades}  
-    Wins: {wins}  
-    Losses: {losses}  
-    Winrate: {winrate:.2f}%  
-    """)
-
-    if winrate > 55:
-        st.success("🟢 DIA BOM PARA ESSE ATIVO")
-    else:
-        st.warning("⚠️ DIA FRACO PARA ESSE ATIVO")
+for n in noticias():
+    st.write("🗞️", n["title"])
