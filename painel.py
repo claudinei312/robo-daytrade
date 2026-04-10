@@ -3,7 +3,6 @@ from twelvedata import TDClient
 import pandas as pd
 import plotly.graph_objects as go
 from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
 import datetime
 
 # ======================
@@ -50,8 +49,8 @@ def pegar_dados():
 # ======================
 
 def tendencia(df):
-    df["EMA50"] = EMAIndicator(df["close"],50).ema_indicator()
-    df["EMA200"] = EMAIndicator(df["close"],200).ema_indicator()
+    df["EMA50"] = EMAIndicator(df["close"], 50).ema_indicator()
+    df["EMA200"] = EMAIndicator(df["close"], 200).ema_indicator()
 
     if df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1]:
         return "ALTA"
@@ -60,14 +59,17 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# SUPORTE / RESISTÊNCIA
+# SUPORTE / RESISTÊNCIA (MELHORADO)
 # ======================
 
 def zonas(df):
-    ult = df.tail(144)  # últimas 12h (M5)
+    ult = df.tail(200)
 
-    suporte = ult["low"].min()
-    resistencia = ult["high"].max()
+    lows = ult["low"].rolling(10).min()
+    highs = ult["high"].rolling(10).max()
+
+    suporte = lows.value_counts().idxmax()
+    resistencia = highs.value_counts().idxmax()
 
     return suporte, resistencia
 
@@ -77,9 +79,8 @@ def zonas(df):
 
 def analisar(df):
 
-    df["EMA9"] = EMAIndicator(df["close"],9).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
-    df["RSI"] = RSIIndicator(df["close"],14).rsi()
+    df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
+    df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
 
     macd = MACD(df["close"])
     df["macd"] = macd.macd()
@@ -92,7 +93,10 @@ def analisar(df):
     score = 0
     erros = []
 
-    # CONTEXTO
+    # ======================
+    # CONTEXTO (TENDÊNCIA)
+    # ======================
+
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -100,31 +104,48 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
+    # ======================
     # EMA
+    # ======================
+
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
 
-    # RSI
-    if df["RSI"].iloc[-1] > 50:
-        score += 1
-    else:
-        erros.append("RSI fraco")
-
+    # ======================
     # MACD
+    # ======================
+
     if df["macd"].iloc[-1] > 0:
         score += 1
     else:
         erros.append("MACD contra")
 
-    # SUPORTE
-    if abs(preco - sup) < (res - sup)*0.3:
+    # ======================
+    # SUPORTE MELHORADO
+    # ======================
+
+    range_total = res - sup
+    distancia = abs(preco - sup)
+
+    if distancia <= range_total * 0.15:
+        score += 2
+    else:
+        erros.append("Muito longe do suporte")
+
+    # toque real no suporte
+    toque_suporte = df["low"].iloc[-3:] <= sup * 1.001
+
+    if toque_suporte.any():
         score += 1
     else:
-        erros.append("Longe do suporte")
+        erros.append("Sem toque real no suporte")
 
+    # ======================
     # DECISÃO
+    # ======================
+
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
@@ -132,7 +153,7 @@ def analisar(df):
     if score >= 4:
         return "COMPRA", preco, entrada, saida, erros
 
-    if score <= -3:
+    if score <= -2:
         return "VENDA", preco, entrada, saida, erros
 
     return "AGUARDAR", preco, entrada, saida, erros
@@ -226,7 +247,7 @@ for e in erros:
     st.write("-", e)
 
 # ======================
-# BOTÃO BACKTEST
+# BACKTEST
 # ======================
 
 if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
