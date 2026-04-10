@@ -1,72 +1,31 @@
 import streamlit as st
 from twelvedata import TDClient
 import pandas as pd
-import requests
-from ta.trend import SMAIndicator
-import plotly.graph_objects as go
 import datetime
-import time
+import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
+from ta.trend import SMAIndicator
 from ta.momentum import RSIIndicator
 
 # ======================
-# 🎨 LAYOUT
+# 🎨 CONFIGURAÇÃO
 # ======================
 
 st.set_page_config(page_title="Sniper Pro Trading", layout="wide")
 
-st.markdown("""
-
-<style>  
-body { background-color: #0b0f19; }  
-  
-.main-title {  
-    font-size: 34px;  
-    font-weight: 800;  
-    text-align: center;  
-    color: #00ff99;  
-    margin-bottom: 15px;  
-}  
-  
-div[data-testid="stMetric"] {  
-    background-color: #0f172a;  
-    border-radius: 10px;  
-    padding: 8px;  
-}  
-</style>  """, unsafe_allow_html=True)
-
-st.markdown("<div class='main-title'>📊 SNIPER PRO TRADING DESK</div>", unsafe_allow_html=True)
+st.title("📊 Sniper Pro Trading System")
 
 # ======================
-# 🔐 CONFIG
+# 🔐 API (SUA API INSERIDA)
 # ======================
 
-API_KEY = st.secrets["API_KEY"]
-NEWS_API = st.secrets["NEWS_API"]
-BOT_TOKEN = st.secrets["BOT_TOKEN"]
-CHAT_ID = st.secrets["CHAT_ID"]
+API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 
 td = TDClient(apikey=API_KEY)
 
 ativos = ["USD/JPY:FX"]
 
 st_autorefresh(interval=5000, key="refresh")
-
-rodando = st.toggle("🟢 Ativar Robô", value=True)
-
-if not rodando:
-    st.stop()
-
-# ======================
-# 📩 TELEGRAM
-# ======================
-
-def telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-    except:
-        pass
 
 # ======================
 # 📥 DADOS
@@ -78,22 +37,20 @@ def pegar_dados(ativo):
     df = td.time_series(
         symbol=ativo,
         interval="5min",
-        outputsize=300
+        outputsize=500
     ).as_pandas()
 
     df = df[::-1].reset_index()
 
-    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    df["datetime"] = df["datetime"].dt.tz_localize("UTC")
-    df["datetime"] = df["datetime"].dt.tz_convert("America/Sao_Paulo")
+    df["datetime"] = pd.to_datetime(df["datetime"])
 
-    for c in ["open","high","low","close"]:
+    for c in ["open", "high", "low", "close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df.dropna()
 
 # ======================
-# 🧠 ESTRATÉGIA (🔥 MELHORADA)
+# 🧠 ESTRATÉGIA (MELHORADA)
 # ======================
 
 def analisar(df):
@@ -110,7 +67,7 @@ def analisar(df):
     suporte = df["low"].rolling(20).min().iloc[-1]
     resistencia = df["high"].rolling(20).max().iloc[-1]
 
-    # tendência real mais forte
+    # tendência
     tendencia = abs(ma9 - ma21) > 0.00025
 
     # candle forte
@@ -122,58 +79,76 @@ def analisar(df):
     vol = df["high"].rolling(10).max().iloc[-1] - df["low"].rolling(10).min().iloc[-1]
     vol_ok = vol > preco * 0.0005
 
-    # 🔥 FILTRO RSI (NOVO)
-    rsi_ok_buy = rsi < 70
-    rsi_ok_sell = rsi > 30
-
-    # ======================
-    # ❌ FILTROS GERAIS
-    # ======================
     if not tendencia or not candle or not vol_ok:
         return "AGUARDAR", preco, 0, 0
 
-    # ======================
-    # 🟢 COMPRA (melhorada)
-    # ======================
-    if (
-        ma9 > ma21 and
-        preco <= suporte * 1.001 and
-        rsi_ok_buy
-    ):
+    # 🟢 COMPRA
+    if ma9 > ma21 and preco <= suporte * 1.001 and rsi < 70:
         return "COMPRA", preco, suporte, preco + (preco - suporte) * 2
 
-    # ======================
-    # 🔴 VENDA (melhorada)
-    # ======================
-    if (
-        ma9 < ma21 and
-        preco >= resistencia * 0.999 and
-        rsi_ok_sell
-    ):
+    # 🔴 VENDA
+    if ma9 < ma21 and preco >= resistencia * 0.999 and rsi > 30:
         return "VENDA", preco, resistencia, preco - (resistencia - preco) * 2
 
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🔁 DADOS
+# 📊 BACKTEST (15 DIAS / 8H–12H)
 # ======================
 
-dados = {ativo: pegar_dados(ativo) for ativo in ativos}
+def backtest(df):
+
+    df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
+    df["MA21"] = SMAIndicator(df["close"], 21).sma_indicator()
+    df["RSI"] = RSIIndicator(df["close"], 14).rsi()
+
+    df = df.dropna()
+
+    wins = 0
+    losses = 0
+
+    for i in range(50, len(df)):
+
+        hora = df["datetime"].iloc[i].hour
+
+        if hora < 8 or hora > 12:
+            continue
+
+        sub = df.iloc[:i]
+
+        sinal, preco, stop, alvo = analisar(sub)
+
+        if sinal == "COMPRA":
+            if df["high"].iloc[i] >= alvo:
+                wins += 1
+            else:
+                losses += 1
+
+        if sinal == "VENDA":
+            if df["low"].iloc[i] <= alvo:
+                wins += 1
+            else:
+                losses += 1
+
+    return wins, losses
 
 # ======================
-# 📊 LOOP PRINCIPAL (INALTERADO)
+# 📊 DASHBOARD
 # ======================
 
 for ativo in ativos:
 
-    st.markdown("---")
+    df = pegar_dados(ativo)
 
-    df = dados[ativo]
     sinal, preco, stop, alvo = analisar(df)
-    agora = datetime.datetime.now()
 
-    st.subheader(ativo)
-    st.metric("Preço", preco)
+    st.subheader(f"📊 {ativo}")
+
+    st.metric("Preço atual", preco)
+
+    # ======================
+    # 📈 GRÁFICO
+    # ======================
 
     fig = go.Figure()
 
@@ -185,9 +160,13 @@ for ativo in ativos:
         close=df["close"]
     ))
 
-    fig.update_layout(template="plotly_dark", height=420, xaxis_rangeslider_visible=False)
+    fig.update_layout(height=500, template="plotly_dark")
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # ======================
+    # 📊 SINAL
+    # ======================
 
     if sinal == "COMPRA":
         st.success("🟢 COMPRA")
@@ -196,18 +175,21 @@ for ativo in ativos:
         st.error("🔴 VENDA")
 
     else:
-        st.info("⚪ AGUARDAR")
+        st.warning("⚪ AGUARDAR")
 
-    if sinal in ["COMPRA", "VENDA"]:
+# ======================
+# 📊 BACKTEST BOTÃO
+# ======================
 
-        telegram(f"""
-🚨 SNIPER PRO TRADE
+if st.button("📊 Rodar Backtest (8h–12h / 15 dias)"):
 
-📊 Ativo: {ativo}
-📈 Sinal: {sinal}
+    df = pegar_dados(ativos[0])
+    w, l = backtest(df)
 
-💰 Preço: {preco}
-🎯 Alvo: {alvo}
+    st.success(f"""
+📊 RESULTADO BACKTEST
 
-⏱ {agora.strftime('%H:%M:%S')}
+✔ Wins: {w}
+❌ Loss: {l}
+📈 Win rate: {round((w/(w+l))*100, 2) if (w+l)>0 else 0}%
 """)
