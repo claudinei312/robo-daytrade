@@ -1,26 +1,23 @@
 import streamlit as st
 from twelvedata import TDClient
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
-import numpy as np
 import datetime
 
 # ======================
 # CONFIG
 # ======================
 
-API_KEY = "4b17399dcf214533abd7d72ea416f1df"
+API_KEY = "SUA_API_KEY"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô apenas", layout="wide")
-st.title("🤖 Robô apenas")
+st.set_page_config(page_title="Robô Pro", layout="wide")
+st.title("🤖 Robô Pro Estruturado")
 
 ATIVO = "EUR/USD"
-
-if st.button("🔄 Atualizar dados"):
-    st.rerun()
 
 # ======================
 # DADOS
@@ -47,8 +44,8 @@ def pegar_dados():
 # ======================
 
 def tendencia(df):
-    df["EMA50"] = EMAIndicator(df["close"],50).ema_indicator()
-    df["EMA200"] = EMAIndicator(df["close"],200).ema_indicator()
+    df["EMA50"] = EMAIndicator(df["close"], 50).ema_indicator()
+    df["EMA200"] = EMAIndicator(df["close"], 200).ema_indicator()
 
     if df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1]:
         return "ALTA"
@@ -57,7 +54,7 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# 🔥 NOVO: SUPORTE/RESISTÊNCIA POR 2 TOQUES
+# SUPORTE / RESISTÊNCIA (2 TOQUES)
 # ======================
 
 def detectar_zonas(df, tol=0.0015):
@@ -68,56 +65,55 @@ def detectar_zonas(df, tol=0.0015):
     zonas_sup = []
     zonas_res = []
 
-    # detectar clusters de suporte
+    # suporte
     for i in range(len(lows)):
-        count = 0
         base = lows[i]
-
-        for j in range(len(lows)):
-            if abs(lows[j] - base) / base < tol:
-                count += 1
+        count = np.sum(np.abs(lows - base) / base < tol)
 
         if count >= 2:
             zonas_sup.append(base)
 
-    # detectar clusters de resistência
+    # resistência
     for i in range(len(highs)):
-        count = 0
         base = highs[i]
-
-        for j in range(len(highs)):
-            if abs(highs[j] - base) / base < tol:
-                count += 1
+        count = np.sum(np.abs(highs - base) / base < tol)
 
         if count >= 2:
             zonas_res.append(base)
 
-    suporte = np.mean(zonas_sup) if zonas_sup else df["low"].min()
-    resistencia = np.mean(zonas_res) if zonas_res else df["high"].max()
+    if len(zonas_sup) > 0:
+        suporte = np.mean(zonas_sup)
+    else:
+        suporte = np.min(lows)
+
+    if len(zonas_res) > 0:
+        resistencia = np.mean(zonas_res)
+    else:
+        resistencia = np.max(highs)
 
     return suporte, resistencia
 
 # ======================
-# ESTRATÉGIA (INALTERADA)
+# ESTRATÉGIA PRINCIPAL
 # ======================
 
 def analisar(df):
 
-    df["EMA9"] = EMAIndicator(df["close"],9).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
-    df["RSI"] = RSIIndicator(df["close"],14).rsi()
+    df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
+    df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
+    df["RSI"] = RSIIndicator(df["close"], 14).rsi()
 
     macd = MACD(df["close"])
-    df["macd"] = macd.macd()
+    df["MACD"] = macd.macd()
 
     preco = df["close"].iloc[-1]
-
     sup, res = detectar_zonas(df)
     trend = tendencia(df)
 
     score = 0
     erros = []
 
+    # tendência
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -125,32 +121,35 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
+    # EMA
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
 
+    # RSI
     if df["RSI"].iloc[-1] > 50:
         score += 1
     else:
         erros.append("RSI fraco")
 
-    if df["macd"].iloc[-1] > 0:
+    # MACD
+    if df["MACD"].iloc[-1] > 0:
         score += 1
     else:
         erros.append("MACD contra")
 
-    # 🔥 NOVO FILTRO: estrutura real
+    # FILTRO ESTRUTURAL (SUP/RES)
     range_total = res - sup
 
     if range_total > 0:
         dist_sup = (preco - sup) / range_total
         dist_res = (res - preco) / range_total
 
-        if dist_sup > 0.8:
-            erros.append("Preço esticado (SUPORTE)")
-        if dist_res > 0.8:
-            erros.append("Preço esticado (RESISTÊNCIA)")
+        if dist_sup > 0.85:
+            erros.append("Preço esticado (perto da resistência)")
+        if dist_res > 0.85:
+            erros.append("Preço esticado (perto do suporte)")
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
@@ -165,7 +164,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST (ATUALIZADO)
+# BACKTEST
 # ======================
 
 def backtest(df):
@@ -174,7 +173,7 @@ def backtest(df):
     loss = 0
     trades = []
 
-    df = df.copy().reset_index(drop=True)
+    df = df.reset_index(drop=True)
 
     for i in range(200, len(df) - 2):
 
@@ -225,27 +224,17 @@ st.write("📊 Tendência:", trend)
 
 sinal, preco, entrada, saida, erros = analisar(df)
 
-st.metric("💰 Preço atual", preco)
+st.metric("💰 Preço atual", round(preco, 5))
 
 # ======================
 # SINAL
 # ======================
 
 if sinal == "COMPRA":
-    st.success(f"""
-🟢 COMPRA
-
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
+    st.success(f"🟢 COMPRA\nEntrada: {entrada}\nSaída: {saida}")
 
 elif sinal == "VENDA":
-    st.error(f"""
-🔴 VENDA
-
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
+    st.error(f"🔴 VENDA\nEntrada: {entrada}\nSaída: {saida}")
 
 else:
     st.warning("⚪ AGUARDAR")
@@ -254,21 +243,21 @@ else:
 # ERROS
 # ======================
 
-st.subheader("⚠️ Motivos para não entrar forte")
+st.subheader("⚠️ Motivos de bloqueio")
 
 for e in erros:
-    st.write("-", e)
+    st.write("•", e)
 
 # ======================
 # BACKTEST
 # ======================
 
-if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
+if st.button("📊 Rodar Backtest 30 dias"):
 
     wins, loss, trades = backtest(df)
 
     total = wins + loss
-    taxa = (wins / total * 100) if total else 0
+    taxa = (wins / total * 100) if total > 0 else 0
 
     st.subheader("📈 Resultado")
 
@@ -276,16 +265,12 @@ if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
     st.write("❌ Loss:", loss)
     st.write(f"🎯 Assertividade: {taxa:.2f}%")
 
-    st.subheader("⚠️ Últimos trades")
+    st.subheader("📌 Últimos trades")
 
     for t in trades[:15]:
         st.write("----")
-        st.write("Sinal:", t["signal"])
-        st.write("Resultado:", t["result"])
-        st.write("Entry:", t["entry"])
-        st.write("Exit:", t["exit"])
-        st.write("Erros:", t["erros"])
-
+        st.write(t)
+        
 # ======================
 # GRÁFICO
 # ======================
@@ -300,6 +285,6 @@ fig.add_trace(go.Candlestick(
     close=df["close"]
 ))
 
-fig.update_layout(template="plotly_dark", height=500)
+fig.update_layout(height=600, template="plotly_dark")
 
 st.plotly_chart(fig, use_container_width=True)
