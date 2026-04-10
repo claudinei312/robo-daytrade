@@ -171,14 +171,14 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST OTIMIZADO (SEM TRAVAR)
+# BACKTEST COM LOG COMPLETO (CORRIGIDO)
 # ======================
 
 def backtest(df):
 
     df = df.dropna().reset_index(drop=True)
 
-    # pré-cálculo (IMPORTANTE PARA PERFORMANCE)
+    # pré-cálculo (performance)
     df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
     df["RSI"] = RSIIndicator(df["close"], 14).rsi()
@@ -187,7 +187,7 @@ def backtest(df):
 
     wins = 0
     loss = 0
-    erros_log = []
+    logs = []
 
     for i in range(200, len(df) - 2):
 
@@ -215,15 +215,13 @@ def backtest(df):
         score = 0
         erros = []
 
-        # EMA
         if ema9 > ema21:
             score += 1
+            trend = "ALTA"
         else:
+            trend = "BAIXA"
             erros.append("EMA contra")
 
-        trend = "ALTA" if ema9 > ema21 else "BAIXA"
-
-        # RSI
         if trend == "ALTA":
             if 50 <= rsi <= 70:
                 score += 1
@@ -235,34 +233,51 @@ def backtest(df):
             else:
                 erros.append("RSI fora venda")
 
-        # MACD
         if macd > 0:
             score += 1
         else:
             erros.append("MACD contra")
 
-        # SUPORTE
-        if abs(preco - sup) < (res - sup) * 0.3:
+        range_total = res - sup
+        dist = abs(preco - sup)
+
+        if range_total > 0 and dist < range_total * 0.3:
             score += 1
         else:
             erros.append("Longe do suporte")
 
-        # RESULTADO
+        resultado = None
+
         if score >= 4:
             if saida > preco:
                 wins += 1
+                resultado = "WIN"
             else:
                 loss += 1
-                erros_log.extend(erros)
+                resultado = "LOSS"
 
         elif score <= -3:
             if saida < preco:
                 wins += 1
+                resultado = "WIN"
             else:
                 loss += 1
-                erros_log.extend(erros)
+                resultado = "LOSS"
 
-    return wins, loss, erros_log
+        if resultado:
+            logs.append({
+                "hora": df["datetime"].iloc[i],
+                "resultado": resultado,
+                "preco": preco,
+                "saida": saida,
+                "rsi": rsi,
+                "adx": adx_val,
+                "macd": macd,
+                "score": score,
+                "erros": erros
+            })
+
+    return wins, loss, logs
 
 # ======================
 # EXECUÇÃO
@@ -284,8 +299,7 @@ elif sinal == "VENDA":
 else:
     st.warning("⚪ AGUARDAR")
 
-st.subheader("⚠️ Motivos para não entrar forte")
-
+st.subheader("⚠️ Motivos atuais")
 for e in erros:
     st.write("-", e)
 
@@ -293,23 +307,28 @@ for e in erros:
 # BACKTEST
 # ======================
 
-if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
+if st.button("📊 Rodar Backtest 30 dias"):
 
-    wins, loss, erros_log = backtest(df)
+    wins, loss, logs = backtest(df)
 
     total = wins + loss
     taxa = (wins / total * 100) if total > 0 else 0
 
     st.subheader("📈 Resultado")
-
     st.write("✅ Wins:", wins)
     st.write("❌ Loss:", loss)
     st.write(f"🎯 Assertividade: {taxa:.2f}%")
 
-    st.subheader("⚠️ Principais erros")
+    st.subheader("⚠️ Detalhes dos Loss (diagnóstico real)")
 
-    for e in set(erros_log):
-        st.write("-", e)
+    for l in logs[:15]:
+        st.write("-----")
+        st.write("Resultado:", l["resultado"])
+        st.write("Score:", l["score"])
+        st.write("RSI:", l["rsi"])
+        st.write("ADX:", l["adx"])
+        st.write("MACD:", l["macd"])
+        st.write("Erros:", l["erros"])
 
 # ======================
 # GRÁFICO
