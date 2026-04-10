@@ -12,12 +12,12 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô 4 indicadores", layout="wide")
-st.title("🤖 Robô 4 indicadores (limpo)")
+st.set_page_config(page_title="Robô apenas", layout="wide")
+st.title("🤖 Robô apenas")
 
 ATIVO = "EUR/USD"
 
-if st.button("🔄 Atualizar"):
+if st.button("🔄 Atualizar dados"):
     st.rerun()
 
 # ======================
@@ -35,13 +35,13 @@ def pegar_dados():
     df = df[::-1].reset_index()
     df["datetime"] = pd.to_datetime(df["datetime"])
 
-    for c in ["open","high","low","close"]:
+    for c in ["open", "high", "low", "close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df.dropna().reset_index(drop=True)
 
 # ======================
-# 1. TENDÊNCIA 1H
+# TENDÊNCIA 1H
 # ======================
 
 def tendencia_1h(df):
@@ -55,7 +55,7 @@ def tendencia_1h(df):
     return "LATERAL"
 
 # ======================
-# 2. SUPORTE / RESISTÊNCIA
+# SUPORTE / RESISTÊNCIA
 # ======================
 
 def zonas(df):
@@ -63,25 +63,33 @@ def zonas(df):
     return ult["low"].min(), ult["high"].max()
 
 # ======================
-# 3. VELA FORTE + PULLBACK
+# VELA FORTE
 # ======================
 
 def vela_forte(df):
     c = df.iloc[-1]
+
     corpo = abs(c["close"] - c["open"])
     range_total = c["high"] - c["low"]
+
     if range_total == 0:
         return False
+
     return corpo / range_total > 0.6
 
+# ======================
+# PULLBACK
+# ======================
 
 def pullback(preco, sup, res):
     dist_sup = abs(preco - sup)
     dist_res = abs(preco - res)
-    return dist_sup < dist_res  # simples e funcional
+
+    # perto de suporte OU resistência
+    return min(dist_sup, dist_res) < (res - sup) * 0.25
 
 # ======================
-# 4. MACD
+# MACD
 # ======================
 
 def get_macd(df):
@@ -89,7 +97,7 @@ def get_macd(df):
     return macd.macd().iloc[-1]
 
 # ======================
-# ESTRATÉGIA
+# ESTRATÉGIA (CORRIGIDA)
 # ======================
 
 def analisar(df):
@@ -100,62 +108,41 @@ def analisar(df):
     trend = tendencia_1h(df)
     macd = get_macd(df)
 
-    score = 0
     erros = []
 
     # ======================
-    # TENDÊNCIA 1H
+    # OBRIGATÓRIOS
     # ======================
 
-    if trend == "ALTA":
-        score += 1
-    elif trend == "BAIXA":
-        score -= 1
-    else:
-        erros.append("Lateral")
+    tem_pullback = pullback(preco, sup, res)
+    tem_vela = vela_forte(df)
 
-    # ======================
-    # SUPORTE / RESISTÊNCIA + PULLBACK
-    # ======================
-
-    if pullback(preco, sup, res):
-        score += 1
-    else:
+    if not tem_pullback:
         erros.append("Sem pullback")
 
-    # ======================
-    # VELA FORTE
-    # ======================
-
-    if vela_forte(df):
-        score += 1
-    else:
+    if not tem_vela:
         erros.append("Sem vela forte")
 
-    # ======================
-    # MACD
-    # ======================
-
-    if macd > 0:
-        score += 1
-    else:
-        erros.append("MACD contra")
+    # ❌ NÃO ENTRA SEM ISSO
+    if not tem_pullback or not tem_vela:
+        return "AGUARDAR", preco, None, None, erros
 
     # ======================
-    # DECISÃO
+    # DIREÇÃO
     # ======================
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
 
-    if score >= 3:
-        if trend == "ALTA":
-            return "COMPRA", preco, entrada, saida, erros
-        elif trend == "BAIXA":
-            return "VENDA", preco, entrada, saida, erros
+    if trend == "ALTA" and macd > 0:
+        return "COMPRA", preco, entrada, saida, erros
 
-    return "AGUARDAR", preco, entrada, saida, erros
+    if trend == "BAIXA" and macd < 0:
+        return "VENDA", preco, entrada, saida, erros
+
+    erros.append("Sem confirmação de tendência/MACD")
+    return "AGUARDAR", preco, None, None, erros
 
 # ======================
 # BACKTEST
@@ -166,7 +153,7 @@ def backtest(df):
     wins = 0
     loss = 0
 
-    for i in range(200, len(df)-1):
+    for i in range(200, len(df) - 1):
 
         sub = df.iloc[:i]
 
@@ -176,7 +163,7 @@ def backtest(df):
             continue
 
         entrada = df["close"].iloc[i]
-        saida = df["close"].iloc[i+1]
+        saida = df["close"].iloc[i + 1]
 
         if sinal == "COMPRA" and saida > entrada:
             wins += 1
@@ -198,14 +185,24 @@ sinal, preco, entrada, saida, erros = analisar(df)
 st.metric("Preço", preco)
 
 st.write("Sinal:", sinal)
-st.write("Erros:", erros)
+
+st.subheader("Motivos")
+
+for e in erros:
+    st.write("-", e)
+
+# ======================
+# BACKTEST
+# ======================
 
 if st.button("Backtest"):
+
     w, l = backtest(df)
     total = w + l
+
     st.write("Wins:", w)
     st.write("Loss:", l)
-    st.write("Winrate:", (w/total*100 if total else 0))
+    st.write("Winrate:", (w / total * 100 if total else 0))
 
 # ======================
 # GRÁFICO
