@@ -3,7 +3,6 @@ from twelvedata import TDClient
 import pandas as pd
 import requests
 from ta.trend import SMAIndicator
-from ta.momentum import RSIIndicator
 from datetime import datetime
 
 # ======================
@@ -17,10 +16,10 @@ td = TDClient(apikey=API_KEY)
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
 st.set_page_config(layout="wide")
-st.title("📊 ROBÔ DAY TRADE FINAL PRO")
+st.title("📊 ROBÔ DAY TRADE PRO")
 
 # ======================
-# 🟢 BOTÃO LIGA/DESLIGA
+# 🟢 LIGA / DESLIGA
 # ======================
 rodando = st.toggle("🟢 Ativar Robô", value=True)
 
@@ -42,6 +41,8 @@ def proxima_vela_m5():
         hora += 1
 
     return agora.replace(hour=hora, minute=minuto, second=0, microsecond=0)
+
+entrada = proxima_vela_m5()
 
 # ======================
 # 📥 DADOS
@@ -73,7 +74,7 @@ def pegar_noticias():
         return []
 
 # ======================
-# 🧠 ESTRATÉGIA
+# 🧠 LÓGICA FINAL
 # ======================
 def analisar(df):
     df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
@@ -88,9 +89,30 @@ def analisar(df):
 
     lateral = abs(ma9 - ma21) < 0.00015
 
+    distancia_sup = abs(preco - suporte)
+    distancia_res = abs(preco - resistencia)
+
+    # ======================
+    # ⚪ AGUARDAR
+    # ======================
     if lateral:
         return "AGUARDAR", preco, 0, 0
 
+    if distancia_sup > preco * 0.002 and distancia_res > preco * 0.002:
+        return "AGUARDAR", preco, 0, 0
+
+    # ======================
+    # 🟡 ALERTA
+    # ======================
+    if ma9 > ma21 and preco <= suporte * 1.003:
+        return "ALERTA_COMPRA", preco, 0, 0
+
+    if ma9 < ma21 and preco >= resistencia * 0.997:
+        return "ALERTA_VENDA", preco, 0, 0
+
+    # ======================
+    # 🟢 / 🔴 ENTRADA REAL
+    # ======================
     if ma9 > ma21 and preco <= suporte * 1.001:
         stop = suporte
         alvo = preco + (preco - stop) * 2
@@ -104,10 +126,8 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 📊 PAINEL PRINCIPAL
+# 📊 PAINEL
 # ======================
-entrada = proxima_vela_m5()
-
 col1, col2, col3 = st.columns(3)
 
 for i, ativo in enumerate(ativos):
@@ -119,9 +139,19 @@ for i, ativo in enumerate(ativos):
         if df is not None:
             sinal, preco, stop, alvo = analisar(df)
 
-            st.metric("Preço Atual", f"{preco:.5f}")
+            st.metric("Preço", f"{preco:.5f}")
 
-            if sinal == "COMPRA":
+            # ======================
+            # VISUAL DOS SINAIS
+            # ======================
+            if sinal == "AGUARDAR":
+                st.info("⚪ AGUARDAR")
+
+            elif "ALERTA" in sinal:
+                st.warning("🟡 " + sinal)
+                st.write("📍 Preparar entrada:", entrada.strftime("%H:%M"))
+
+            elif sinal == "COMPRA":
                 st.success("🟢 COMPRA CONFIRMADA")
                 st.write("📍 Entrada:", entrada.strftime("%H:%M"))
                 st.write("🛑 Stop:", stop)
@@ -133,16 +163,11 @@ for i, ativo in enumerate(ativos):
                 st.write("🛑 Stop:", stop)
                 st.write("🎯 Alvo:", alvo)
 
-            else:
-                st.info("⚪ AGUARDAR")
-
 # ======================
 # 📰 NOTÍCIAS
 # ======================
 st.divider()
 st.subheader("📰 Notícias Forex")
 
-news = pegar_noticias()
-
-for n in news:
+for n in pegar_noticias():
     st.write("🗞️", n["title"])
