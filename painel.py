@@ -14,27 +14,7 @@ import json
 # ======================
 st.set_page_config(page_title="Sniper Pro Trading", layout="wide")
 
-st.markdown("""
-<style>
-body { background-color: #0b0f19; }
-
-.main-title {
-    font-size: 34px;
-    font-weight: 800;
-    text-align: center;
-    color: #00ff99;
-    margin-bottom: 15px;
-}
-
-div[data-testid="stMetric"] {
-    background-color: #0f172a;
-    border-radius: 10px;
-    padding: 8px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("<div class='main-title'>📊 SNIPER PRO TRADING DESK</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center;font-size:28px;font-weight:bold;'>📊 SNIPER PRO TRADING DESK</div>", unsafe_allow_html=True)
 
 # ======================
 # 🔐 CONFIG
@@ -42,12 +22,12 @@ st.markdown("<div class='main-title'>📊 SNIPER PRO TRADING DESK</div>", unsafe
 API_KEY = st.secrets["API_KEY"]
 NEWS_API = st.secrets["NEWS_API"]
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
-CHAT_ID = st.secrets["CHAT_ID"]
+CHAT_ID = "7794049342"
 
 td = TDClient(apikey=API_KEY)
 
 # ======================
-# 🧠 CONFIG DINÂMICA (AUTO OTIMIZAÇÃO)
+# 🧠 CONFIG DINÂMICA
 # ======================
 def carregar_config():
     try:
@@ -61,7 +41,7 @@ MA_FAST = cfg["ma_fast"]
 MA_SLOW = cfg["ma_slow"]
 
 # ======================
-# 🎯 ATIVO FOCADO
+# 🎯 ATIVO
 # ======================
 ativos = ["USD/JPY:FX"]
 
@@ -76,7 +56,7 @@ if not rodando:
     st.stop()
 
 # ======================
-# 📩 TELEGRAM
+# 📩 TELEGRAM (CORRIGIDO)
 # ======================
 def telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -89,21 +69,18 @@ def telegram(msg):
     try:
         r = requests.post(url, data=payload, timeout=10)
 
-        if r.status_code != 200:
-            print("❌ Erro Telegram:", r.text)
-        else:
-            print("✅ Telegram enviado com sucesso")
+        print("STATUS:", r.status_code)
+        print("RESPOSTA:", r.text)
 
     except Exception as e:
-        print("❌ Falha conexão Telegram:", str(e))
-
+        print("ERRO TELEGRAM:", e)
 
 # ======================
-# 🧪 TESTE TELEGRAM (ADICIONADO)
+# 🧪 TESTE TELEGRAM
 # ======================
 if st.button("📩 Testar Telegram"):
-    telegram("🚀 TESTE: Telegram funcionando corretamente!")
-    st.success("Mensagem enviada! Verifique seu Telegram.")
+    telegram("🚀 TESTE: Telegram funcionando!")
+    st.success("Mensagem enviada (verifique o Telegram)")
 
 # ======================
 # ⏱️ TIMER
@@ -185,7 +162,7 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 ESTADO GLOBAL
+# 🧠 ESTADO
 # ======================
 if "sinais" not in st.session_state:
     st.session_state.sinais = {}
@@ -199,7 +176,7 @@ if "ultimo_status" not in st.session_state:
 dados = {ativo: pegar_dados(ativo) for ativo in ativos}
 
 # ======================
-# 📊 LOOP PRINCIPAL
+# 📊 LOOP
 # ======================
 for ativo in ativos:
 
@@ -209,9 +186,6 @@ for ativo in ativos:
     sinal, preco, stop, alvo = analisar(df)
     agora = datetime.datetime.now()
 
-    # ======================
-    # 🚨 SINAL
-    # ======================
     if sinal in ["COMPRA", "VENDA"]:
 
         if ativo not in st.session_state.sinais or st.session_state.sinais[ativo]["tipo"] != sinal:
@@ -232,12 +206,9 @@ for ativo in ativos:
 💰 Entrada: {preco}
 🎯 Saída: {alvo}
 
-🟢 Hora: {agora.strftime('%H:%M:%S')}
+🕒 {agora.strftime('%H:%M:%S')}
 """)
 
-    # ======================
-    # ⏱ STATUS
-    # ======================
     ultimo = st.session_state.ultimo_status.get(ativo)
 
     if not ultimo or (agora - ultimo).seconds >= 300:
@@ -252,13 +223,9 @@ for ativo in ativos:
 📈 Sinal: {sinal}
 """)
 
-    # ======================
-    # 📊 VISUAL
-    # ======================
     st.subheader(ativo)
-
     st.metric("Preço", preco)
-    st.info(f"⏱ Candle fecha em: {tempo_candle()}")
+    st.info(f"⏱ Candle: {tempo_candle()}")
 
     fig = go.Figure()
 
@@ -273,39 +240,6 @@ for ativo in ativos:
     fig.update_layout(template="plotly_dark", height=420, xaxis_rangeslider_visible=False)
 
     st.plotly_chart(fig, use_container_width=True)
-
-    # ======================
-    # 📌 SINAL ATUAL
-    # ======================
-    info = st.session_state.sinais.get(ativo, None)
-
-    if info:
-
-        entrada = info["entrada_hora"]
-        saida = entrada + datetime.timedelta(minutes=5)
-
-        st.markdown("### 📊 SINAL ATUAL")
-
-        st.write(f"📌 Direção: {info['tipo']}")
-        st.write(f"💰 Entrada: {info['preco_entrada']}")
-        st.write(f"🎯 Saída: {info['preco_saida']}")
-        st.write(f"🟢 Entrada: {entrada.strftime('%H:%M:%S')}")
-        st.write(f"🔴 Saída: {saida.strftime('%H:%M:%S')}")
-
-    else:
-        st.info("📌 AGUARDANDO OPORTUNIDADE")
-
-    # ======================
-    # ALERTA
-    # ======================
-    if sinal == "COMPRA":
-        st.success("🟢 COMPRA")
-
-    elif sinal == "VENDA":
-        st.error("🔴 VENDA")
-
-    else:
-        st.info("⚪ AGUARDAR")
 
 # ======================
 # 📰 NOTÍCIAS
