@@ -45,7 +45,10 @@ CHAT_ID = st.secrets["CHAT_ID"]
 
 td = TDClient(apikey=API_KEY)
 
-ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
+# ======================
+# 🎯 ATIVO FOCADO (OTIMIZADO)
+# ======================
+ativos = ["USD/JPY:FX"]
 
 # ======================
 # 🔁 AUTO REFRESH
@@ -81,9 +84,7 @@ def tempo_candle():
 # ======================
 @st.cache_data(ttl=300)
 def noticias():
-
-    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
-
+    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR JPY&language=en&pageSize=5&apiKey={NEWS_API}"
     try:
         return requests.get(url).json().get("articles", [])
     except:
@@ -113,7 +114,7 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 🧠 ESTRATÉGIA (SEM ALTERAÇÃO)
+# 🧠 ESTRATÉGIA (IGUAL ORIGINAL)
 # ======================
 def analisar(df):
 
@@ -163,7 +164,7 @@ if "ultimo_status" not in st.session_state:
 dados = {ativo: pegar_dados(ativo) for ativo in ativos}
 
 # ======================
-# 📊 LOOP
+# 📊 LOOP PRINCIPAL
 # ======================
 for ativo in ativos:
 
@@ -174,7 +175,7 @@ for ativo in ativos:
     agora = datetime.datetime.now()
 
     # ======================
-    # 🚨 SINAL PRINCIPAL
+    # 🚨 SINAL
     # ======================
     if sinal in ["COMPRA", "VENDA"]:
 
@@ -187,8 +188,6 @@ for ativo in ativos:
                 "preco_saida": alvo
             }
 
-            agora_txt = agora.strftime("%H:%M:%S")
-
             telegram(f"""
 🚨 SINAL DE TRADE
 
@@ -198,12 +197,11 @@ for ativo in ativos:
 💰 Entrada: {preco}
 🎯 Saída: {alvo}
 
-🟢 Hora entrada: {agora_txt}
-🔴 Saída estimada: +5min
+🟢 Hora: {agora.strftime('%H:%M:%S')}
 """)
 
     # ======================
-    # ⏱ STATUS A CADA 5 MIN
+    # ⏱ STATUS
     # ======================
     ultimo = st.session_state.ultimo_status.get(ativo)
 
@@ -212,17 +210,15 @@ for ativo in ativos:
         st.session_state.ultimo_status[ativo] = agora
 
         telegram(f"""
-📊 STATUS DO ATIVO
+📊 STATUS
 
 📌 {ativo}
-💰 Preço atual: {preco}
+💰 Preço: {preco}
 📈 Sinal: {sinal}
-
-⏱ Atualização automática (5 min)
 """)
 
     # ======================
-    # 📊 EXIBIÇÃO
+    # 📊 VISUAL
     # ======================
     st.subheader(ativo)
 
@@ -244,7 +240,7 @@ for ativo in ativos:
     st.plotly_chart(fig, use_container_width=True)
 
     # ======================
-    # 📌 PAINEL DO SINAL
+    # 📌 SINAL ATUAL
     # ======================
     info = st.session_state.sinais.get(ativo, None)
 
@@ -253,19 +249,19 @@ for ativo in ativos:
         entrada = info["entrada_hora"]
         saida = entrada + datetime.timedelta(minutes=5)
 
-        st.markdown("### 📊 SINAL DO ATIVO")
+        st.markdown("### 📊 SINAL ATUAL")
 
         st.write(f"📌 Direção: {info['tipo']}")
-        st.write(f"💰 Preço de entrada: {info['preco_entrada']}")
-        st.write(f"🎯 Preço de saída: {info['preco_saida']}")
-        st.write(f"🟢 Hora entrada: {entrada.strftime('%H:%M:%S')}")
-        st.write(f"🔴 Hora saída: {saida.strftime('%H:%M:%S')}")
+        st.write(f"💰 Entrada: {info['preco_entrada']}")
+        st.write(f"🎯 Saída: {info['preco_saida']}")
+        st.write(f"🟢 Entrada: {entrada.strftime('%H:%M:%S')}")
+        st.write(f"🔴 Saída: {saida.strftime('%H:%M:%S')}")
 
     else:
-        st.info("📌 Possível entrada: AGUARDAR")
+        st.info("📌 AGUARDANDO OPORTUNIDADE")
 
     # ======================
-    # ALERTA VISUAL
+    # ALERTA
     # ======================
     if sinal == "COMPRA":
         st.success("🟢 COMPRA")
