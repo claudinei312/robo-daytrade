@@ -72,7 +72,7 @@ def zonas(df):
     return suporte, resistencia
 
 # ======================
-# ESTRATÉGIA
+# ESTRATÉGIA (ATUALIZADA)
 # ======================
 
 def analisar(df):
@@ -106,11 +106,16 @@ def analisar(df):
     else:
         erros.append("EMA contra")
 
-    # RSI
-    if df["RSI"].iloc[-1] > 50:
+    # ======================
+    # RSI (CORRIGIDO)
+    # ======================
+    rsi_atual = df["RSI"].iloc[-1]
+    rsi_anterior = df["RSI"].iloc[-2]
+
+    if rsi_atual > 55 and rsi_atual > rsi_anterior:
         score += 1
     else:
-        erros.append("RSI fraco")
+        erros.append("RSI sem força")
 
     # MACD
     if df["macd"].iloc[-1] > 0:
@@ -118,13 +123,25 @@ def analisar(df):
     else:
         erros.append("MACD contra")
 
-    # SUPORTE
-    if abs(preco - sup) < (res - sup)*0.3:
+    # ======================
+    # SUPORTE (CORRIGIDO)
+    # ======================
+    ultimo_candle = df.iloc[-1]
+
+    corpo = abs(ultimo_candle["close"] - ultimo_candle["open"])
+    pavio_baixo = ultimo_candle["open"] - ultimo_candle["low"]
+
+    rejeicao = pavio_baixo > corpo
+    distancia = abs(preco - sup)
+
+    if distancia < (res - sup)*0.15 and rejeicao:
         score += 1
     else:
-        erros.append("Longe do suporte")
+        erros.append("Sem reação no suporte")
 
+    # ======================
     # DECISÃO
+    # ======================
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
@@ -226,7 +243,7 @@ for e in erros:
     st.write("-", e)
 
 # ======================
-# BOTÃO BACKTEST
+# BACKTEST
 # ======================
 
 if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
@@ -234,7 +251,6 @@ if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
     wins, loss, erros_log = backtest(df)
 
     total = wins + loss
-
     taxa = (wins / total * 100) if total > 0 else 0
 
     st.subheader("📈 Resultado")
