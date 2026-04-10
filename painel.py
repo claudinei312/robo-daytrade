@@ -8,7 +8,6 @@ from ta.trend import SMAIndicator
 # 🔐 CONFIG
 # ======================
 API_KEY = st.secrets["API_KEY"]
-NEWS_API = st.secrets["NEWS_API"]
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
 CHAT_ID = st.secrets["CHAT_ID"]
 
@@ -16,13 +15,30 @@ td = TDClient(apikey=API_KEY)
 
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
-st.set_page_config(layout="wide")
-st.title("📊 ROBÔ SNIPER + INTELIGÊNCIA DE MERCADO")
+# ======================
+# 🎨 LAYOUT
+# ======================
+st.set_page_config(page_title="Sniper Pro", layout="wide")
 
-rodando = st.toggle("🟢 Ativar Robô", value=True)
+st.markdown("""
+<style>
+.big-title {
+    font-size:32px;
+    font-weight:700;
+    color:#00ff99;
+    text-align:center;
+}
+.card {
+    background:#111827;
+    padding:15px;
+    border-radius:12px;
+    margin-bottom:10px;
+    border:1px solid #2d2d2d;
+}
+</style>
+""", unsafe_allow_html=True)
 
-if not rodando:
-    st.stop()
+st.markdown("<div class='big-title'>📊 SNIPER PRO DASHBOARD</div>", unsafe_allow_html=True)
 
 # ======================
 # 📩 TELEGRAM
@@ -42,7 +58,7 @@ def pegar_dados(ativo):
     df = td.time_series(
         symbol=ativo,
         interval="5min",
-        outputsize=300
+        outputsize=200
     ).as_pandas()
 
     df = df[::-1].reset_index()
@@ -54,18 +70,7 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 📰 NOTÍCIAS
-# ======================
-@st.cache_data(ttl=300)
-def noticias():
-    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
-    try:
-        return requests.get(url).json()["articles"]
-    except:
-        return []
-
-# ======================
-# 🧠 SNIPER (NÃO ALTERADO)
+# 🧠 SNIPER
 # ======================
 def analisar(df):
 
@@ -101,106 +106,36 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 SCORE DO MERCADO
+# 📩 FORMATAÇÃO TELEGRAM
 # ======================
-def score_mercado(dados):
+def formatar_sinal(ativo, sinal, preco, stop, alvo):
 
-    total = 0
+    if sinal == "COMPRA":
+        return f"""
+🟢 COMPRA DETECTADA
+📊 {ativo}
+💰 {preco}
+🛑 SL {stop}
+🎯 TP {alvo}
+"""
 
-    for ativo, df in dados.items():
+    if sinal == "VENDA":
+        return f"""
+🔴 VENDA DETECTADA
+📊 {ativo}
+💰 {preco}
+🛑 SL {stop}
+🎯 TP {alvo}
+"""
 
-        vol = df["high"].rolling(20).max().iloc[-1] - df["low"].rolling(20).min().iloc[-1]
-
-        mov = abs(df["close"].iloc[-1] - df["close"].iloc[-20])
-
-        total += vol + mov
-
-    media = total / len(dados)
-
-    if media < 0.001:
-        return "🔴 RUIM"
-    elif media < 0.003:
-        return "🟡 NEUTRO"
-    else:
-        return "🟢 BOM"
-
-# ======================
-# 📰 NÍVEL DE NOTÍCIA
-# ======================
-def nivel_noticia():
-
-    forte = ["fed", "interest rate", "inflation", "war", "crisis"]
-    medio = ["usd", "eur", "gbp"]
-
-    nivel = "🟢 BAIXO"
-
-    for n in noticias():
-        t = n["title"].lower()
-
-        if any(x in t for x in forte):
-            return "🔴 ALTO RISCO"
-
-        if any(x in t for x in medio):
-            nivel = "🟡 MÉDIO"
-
-    return nivel
+    return ""
 
 # ======================
-# 🏆 RANKING ATIVOS
+# 📊 BOTÃO LIGA/DESLIGA
 # ======================
-def ranking_ativos(dados):
+rodando = st.toggle("🟢 Robô Ativo", value=True)
 
-    scores = {}
-
-    for ativo, df in dados.items():
-
-        vol = df["high"].rolling(20).max().iloc[-1] - df["low"].rolling(20).min().iloc[-1]
-
-        ma9 = SMAIndicator(df["close"], 9).sma_indicator().iloc[-1]
-        ma21 = SMAIndicator(df["close"], 21).sma_indicator().iloc[-1]
-
-        trend = abs(ma9 - ma21)
-
-        scores[ativo] = vol + trend
-
-    return sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-# ======================
-# 📥 DADOS
-# ======================
-dados = {ativo: pegar_dados(ativo) for ativo in ativos}
-
-# ======================
-# 📊 INTELIGÊNCIA GLOBAL
-# ======================
-score = score_mercado(dados)
-news_level = nivel_noticia()
-ranking = ranking_ativos(dados)
-best = ranking[0][0]
-
-# ======================
-# 📩 ALERTAS
-# ======================
-st.subheader("🧠 INTELIGÊNCIA DO DIA")
-
-st.write("📊 Mercado:", score)
-st.write("📰 Notícias:", news_level)
-
-st.subheader("🏆 Ranking de ativos")
-
-for ativo, sc in ranking:
-    st.write(f"{ativo} → {sc:.4f}")
-
-st.success(f"🔥 Melhor ativo do dia: {best}")
-
-# ======================
-# 🚨 BLOQUEIO DE RISCO
-# ======================
-if news_level == "🔴 ALTO RISCO":
-    st.error("⚠️ MERCADO EM ALTO RISCO (NOTÍCIAS)")
-
-    telegram("⚠️ Mercado perigoso hoje - evitar operações")
-
+if not rodando:
     st.stop()
 
 # ======================
@@ -212,33 +147,19 @@ for i, ativo in enumerate(ativos):
 
     with [col1, col2, col3][i]:
 
-        st.subheader(ativo)
-
-        df = dados[ativo]
+        df = pegar_dados(ativo)
 
         sinal, preco, stop, alvo = analisar(df)
 
-        st.metric("Preço", preco)
-
-        if ativo == best:
-            st.info("🔥 Melhor ativo hoje")
+        st.markdown(f"<div class='card'><b>{ativo}</b><br>Preço: {preco}<br>Sinal: {sinal}</div>", unsafe_allow_html=True)
 
         if sinal == "COMPRA":
             st.success("🟢 COMPRA")
-            telegram(f"🟢 COMPRA {ativo} | {preco} | SL {stop} | TP {alvo}")
+            telegram(formatar_sinal(ativo, sinal, preco, stop, alvo))
 
         elif sinal == "VENDA":
             st.error("🔴 VENDA")
-            telegram(f"🔴 VENDA {ativo} | {preco} | SL {stop} | TP {alvo}")
+            telegram(formatar_sinal(ativo, sinal, preco, stop, alvo))
 
         else:
             st.info("⚪ AGUARDAR")
-
-# ======================
-# 📰 NOTÍCIAS
-# ======================
-st.divider()
-st.subheader("📰 Notícias")
-
-for n in noticias():
-    st.write("🗞️", n["title"])
