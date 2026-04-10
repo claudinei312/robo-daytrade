@@ -5,10 +5,11 @@ import requests
 from ta.trend import SMAIndicator
 import plotly.graph_objects as go
 import datetime
+import time
 from streamlit_autorefresh import st_autorefresh
 
 # ======================
-# 🎨 LAYOUT PROFISSIONAL
+# 🎨 LAYOUT
 # ======================
 st.set_page_config(
     page_title="Sniper Pro Trading",
@@ -81,16 +82,16 @@ def telegram(msg):
 # ⏱️ TIMER CANDLE
 # ======================
 def tempo_candle():
-
     agora = datetime.datetime.utcnow()
-
     minuto = agora.minute % 5
     segundo = agora.second
+    return f"{4 - minuto:02d}:{59 - segundo:02d}"
 
-    min_rest = 4 - minuto
-    seg_rest = 59 - segundo
-
-    return f"{min_rest:02d}:{seg_rest:02d}"
+# ======================
+# ⏱️ TIMER ENTRADA (60s)
+# ======================
+def timer_entrada():
+    return 60 - (int(time.time()) % 60)
 
 # ======================
 # 📥 DADOS
@@ -126,7 +127,7 @@ def noticias():
         return []
 
 # ======================
-# 🧠 SNIPER (INALTERADO)
+# 🧠 ESTRATÉGIA (INALTERADA)
 # ======================
 def analisar(df):
 
@@ -162,7 +163,7 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 📊 SCORE MERCADO
+# 🧠 SCORE
 # ======================
 def score_mercado(dados):
 
@@ -225,7 +226,7 @@ def ranking_ativos(dados):
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 # ======================
-# 📊 GRÁFICO CANDLE
+# 📊 GRÁFICO
 # ======================
 def grafico(df, ativo):
 
@@ -242,7 +243,7 @@ def grafico(df, ativo):
     ))
 
     fig.update_layout(
-        title=f"{ativo} - 5M Candle Live",
+        title=f"{ativo} - 5M Live",
         template="plotly_dark",
         height=420,
         xaxis_rangeslider_visible=False
@@ -268,55 +269,57 @@ st.subheader("🧠 INTELIGÊNCIA DO DIA")
 st.write("📊 Mercado:", score)
 st.write("📰 Notícias:", news_level)
 
-st.subheader("🏆 Ranking de ativos")
+st.subheader("🏆 Ranking")
 
 for ativo, sc in ranking:
     st.write(f"{ativo} → {sc:.4f}")
 
-st.success(f"🔥 Melhor ativo do dia: {best}")
+st.success(f"🔥 Melhor ativo: {best}")
 
 # ======================
-# 🚨 BLOQUEIO RISCO
+# 🚨 RISCO
 # ======================
 if news_level == "🔴 ALTO RISCO":
-    st.error("⚠️ MERCADO EM ALTO RISCO")
-    telegram("⚠️ Mercado perigoso hoje - evitar operações")
+    st.error("⚠️ MERCADO PERIGOSO")
+    telegram("⚠️ Mercado perigoso - evitar trades")
     st.stop()
 
 # ======================
-# 📊 PAINEL ATIVOS
+# 📊 PAINEL
 # ======================
-col1, col2, col3 = st.columns(3)
-
 for i, ativo in enumerate(ativos):
 
-    with [col1, col2, col3][i]:
+    st.markdown("---")  # 🔥 separação dos ativos
 
-        df = dados[ativo]
+    df = dados[ativo]
 
-        sinal, preco, stop, alvo = analisar(df)
+    sinal, preco, stop, alvo = analisar(df)
 
-        st.markdown(f"<div class='card'><b>{ativo}</b></div>", unsafe_allow_html=True)
+    st.subheader(ativo)
 
-        st.metric("Preço", preco)
+    st.metric("Preço", preco)
 
-        st.info(f"⏱ Próximo candle: {tempo_candle()}")
+    st.info(f"⏱ Candle fecha em: {tempo_candle()}")
 
-        st.plotly_chart(grafico(df, ativo), use_container_width=True)
+    st.plotly_chart(grafico(df, ativo), use_container_width=True)
 
-        if ativo == best:
-            st.info("🔥 Melhor ativo do dia")
+    # 🔥 TIMER ENTRADA
+    if sinal in ["COMPRA", "VENDA"]:
+        st.warning(f"⏱ ENTRE AGORA - expira em {timer_entrada()}s")
 
-        if sinal == "COMPRA":
-            st.success("🟢 COMPRA")
-            telegram(f"🟢 COMPRA {ativo} | {preco} | SL {stop} | TP {alvo}")
+    if ativo == best:
+        st.info("🔥 Melhor ativo do dia")
 
-        elif sinal == "VENDA":
-            st.error("🔴 VENDA")
-            telegram(f"🔴 VENDA {ativo} | {preco} | SL {stop} | TP {alvo}")
+    if sinal == "COMPRA":
+        st.success("🟢 COMPRA")
+        telegram(f"🟢 COMPRA {ativo} | {preco} | SL {stop} | TP {alvo}")
 
-        else:
-            st.info("⚪ AGUARDAR")
+    elif sinal == "VENDA":
+        st.error("🔴 VENDA")
+        telegram(f"🔴 VENDA {ativo} | {preco} | SL {stop} | TP {alvo}")
+
+    else:
+        st.info("⚪ AGUARDAR")
 
 # ======================
 # 📰 NOTÍCIAS
