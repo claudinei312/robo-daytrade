@@ -1,100 +1,30 @@
+# =====================================================
+# 🤖 ROBÔ SNIPER PRO - AUTO OTIMIZADO (VERSÃO ATUALIZADA)
+# USD/JPY ONLY + BACKTEST + AUTO OPTIMIZER + STREAMLIT
+# =====================================================
+
 import streamlit as st
-from twelvedata import TDClient
 import pandas as pd
-import requests
-from ta.trend import SMAIndicator
-import plotly.graph_objects as go
-import datetime
-import time
-from streamlit_autorefresh import st_autorefresh
+from twelvedata import TDClient
 
-# ======================
-# 🎨 LAYOUT
-# ======================
-st.set_page_config(page_title="Sniper Pro Trading", layout="wide")
+# =========================
+# ⚙️ CONFIG ATUALIZADA
+# =========================
 
-st.markdown("""
-<style>
-body { background-color: #0b0f19; }
+API_KEY = "SUA_API_KEY"
+ATIVO = "USD/JPY"
 
-.main-title {
-    font-size: 34px;
-    font-weight: 800;
-    text-align: center;
-    color: #00ff99;
-    margin-bottom: 15px;
+CONFIG = {
+    "ma_fast": 9,
+    "ma_slow": 21
 }
 
-div[data-testid="stMetric"] {
-    background-color: #0f172a;
-    border-radius: 10px;
-    padding: 8px;
-}
-</style>
-""", unsafe_allow_html=True)
+# =========================
+# 📊 PEGAR DADOS
+# =========================
 
-st.markdown("<div class='main-title'>📊 SNIPER PRO TRADING DESK</div>", unsafe_allow_html=True)
-
-# ======================
-# 🔐 CONFIG
-# ======================
-API_KEY = st.secrets["API_KEY"]
-NEWS_API = st.secrets["NEWS_API"]
-BOT_TOKEN = st.secrets["BOT_TOKEN"]
-CHAT_ID = st.secrets["CHAT_ID"]
-
-td = TDClient(apikey=API_KEY)
-
-# ======================
-# 🎯 ATIVO FOCADO (OTIMIZADO)
-# ======================
-ativos = ["USD/JPY:FX"]
-
-# ======================
-# 🔁 AUTO REFRESH
-# ======================
-st_autorefresh(interval=5000, key="refresh")
-
-rodando = st.toggle("🟢 Ativar Robô", value=True)
-
-if not rodando:
-    st.stop()
-
-# ======================
-# 📩 TELEGRAM
-# ======================
-def telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-    except:
-        pass
-
-# ======================
-# ⏱️ TIMER
-# ======================
-def tempo_candle():
-    agora = datetime.datetime.utcnow()
-    minuto = agora.minute % 5
-    segundo = agora.second
-    return f"{4 - minuto:02d}:{59 - segundo:02d}"
-
-# ======================
-# 📰 NOTÍCIAS
-# ======================
-@st.cache_data(ttl=300)
-def noticias():
-    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR JPY&language=en&pageSize=5&apiKey={NEWS_API}"
-    try:
-        return requests.get(url).json().get("articles", [])
-    except:
-        return []
-
-# ======================
-# 📥 DADOS
-# ======================
-@st.cache_data(ttl=240)
 def pegar_dados(ativo):
+    td = TDClient(apikey=API_KEY)
 
     df = td.time_series(
         symbol=ativo,
@@ -102,181 +32,141 @@ def pegar_dados(ativo):
         outputsize=300
     ).as_pandas()
 
-    df = df[::-1].reset_index()
+    df = df.sort_index()
 
-    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    df["datetime"] = df["datetime"].dt.tz_localize("UTC")
-    df["datetime"] = df["datetime"].dt.tz_convert("America/Sao_Paulo")
+    return df
 
-    for c in ["open","high","low","close"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+# =========================
+# 🔧 FILTRO (igual seu estilo)
+# =========================
 
-    return df.dropna()
+def filtrar(df):
+    df = df.copy()
+    df["ma_fast"] = df["close"].rolling(CONFIG["ma_fast"]).mean()
+    df["ma_slow"] = df["close"].rolling(CONFIG["ma_slow"]).mean()
 
-# ======================
-# 🧠 ESTRATÉGIA (IGUAL ORIGINAL)
-# ======================
-def analisar(df):
+    df["signal"] = 0
+    df.loc[df["ma_fast"] > df["ma_slow"], "signal"] = 1
+    df.loc[df["ma_fast"] < df["ma_slow"], "signal"] = -1
 
-    df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
-    df["MA21"] = SMAIndicator(df["close"], 21).sma_indicator()
+    return df
 
-    preco = df["close"].iloc[-1]
-    ma9 = df["MA9"].iloc[-1]
-    ma21 = df["MA21"].iloc[-1]
+# =========================
+# 📈 BACKTEST (15 dias simulado)
+# =========================
 
-    suporte = df["low"].rolling(20).min().iloc[-1]
-    resistencia = df["high"].rolling(20).max().iloc[-1]
+def backtest(df):
 
-    tendencia = abs(ma9 - ma21) > 0.00025
+    saldo = 1000
+    wins = 0
+    losses = 0
+    trades = 0
 
-    body = abs(df["close"].iloc[-1] - df["open"].iloc[-1])
-    rng = df["high"].iloc[-1] - df["low"].iloc[-1]
+    for i in range(1, len(df)):
 
-    candle = body > rng * 0.6
+        if df["signal"].iloc[i] != df["signal"].iloc[i-1]:
+            trades += 1
 
-    vol = df["high"].rolling(10).max().iloc[-1] - df["low"].rolling(10).min().iloc[-1]
-    vol_ok = vol > preco * 0.0005
+            if df["signal"].iloc[i] == 1:
+                resultado = 1 if df["close"].iloc[i] > df["close"].iloc[i-1] else -1
+            else:
+                resultado = 1 if df["close"].iloc[i] < df["close"].iloc[i-1] else -1
 
-    if not tendencia or not candle or not vol_ok:
-        return "AGUARDAR", preco, 0, 0
+            if resultado > 0:
+                saldo += 1
+                wins += 1
+            else:
+                saldo -= 1
+                losses += 1
 
-    if ma9 > ma21 and preco <= suporte * 1.001:
-        return "COMPRA", preco, suporte, preco + (preco - suporte) * 2
+    winrate = (wins / trades * 100) if trades > 0 else 0
 
-    if ma9 < ma21 and preco >= resistencia * 0.999:
-        return "VENDA", preco, resistencia, preco - (resistencia - preco) * 2
+    return {
+        "saldo": round(saldo, 2),
+        "trades": trades,
+        "wins": wins,
+        "losses": losses,
+        "winrate": round(winrate, 2)
+    }
 
-    return "AGUARDAR", preco, 0, 0
+# =========================
+# 🤖 AUTO OTIMIZAÇÃO
+# =========================
 
-# ======================
-# 🧠 ESTADO GLOBAL
-# ======================
-if "sinais" not in st.session_state:
-    st.session_state.sinais = {}
+def otimizar(df):
 
-if "ultimo_status" not in st.session_state:
-    st.session_state.ultimo_status = {}
+    combinacoes = [
+        (5, 20),
+        (7, 21),
+        (9, 21),
+        (10, 30)
+    ]
 
-# ======================
-# 📥 DADOS
-# ======================
-dados = {ativo: pegar_dados(ativo) for ativo in ativos}
+    melhor = None
+    melhor_cfg = None
 
-# ======================
-# 📊 LOOP PRINCIPAL
-# ======================
-for ativo in ativos:
+    for f, s in combinacoes:
 
-    st.markdown("---")
+        CONFIG["ma_fast"] = f
+        CONFIG["ma_slow"] = s
 
-    df = dados[ativo]
-    sinal, preco, stop, alvo = analisar(df)
-    agora = datetime.datetime.now()
+        df_temp = filtrar(df)
+        res = backtest(df_temp)
 
-    # ======================
-    # 🚨 SINAL
-    # ======================
-    if sinal in ["COMPRA", "VENDA"]:
+        if melhor is None or res["saldo"] > melhor["saldo"]:
+            melhor = res
+            melhor_cfg = (f, s)
 
-        if ativo not in st.session_state.sinais or st.session_state.sinais[ativo]["tipo"] != sinal:
+    CONFIG["ma_fast"] = melhor_cfg[0]
+    CONFIG["ma_slow"] = melhor_cfg[1]
 
-            st.session_state.sinais[ativo] = {
-                "tipo": sinal,
-                "entrada_hora": agora,
-                "preco_entrada": preco,
-                "preco_saida": alvo
-            }
+    return melhor, melhor_cfg
 
-            telegram(f"""
-🚨 SINAL DE TRADE
+# =========================
+# 🖥️ STREAMLIT PAINEL
+# =========================
 
-📊 Ativo: {ativo}
-📈 Direção: {sinal}
+st.set_page_config(page_title="Sniper Pro Auto", layout="wide")
 
-💰 Entrada: {preco}
-🎯 Saída: {alvo}
+st.title("🤖 Sniper Pro - Auto Otimizador USD/JPY")
 
-🟢 Hora: {agora.strftime('%H:%M:%S')}
-""")
+# 📊 dados
+df = pegar_dados(ATIVO)
 
-    # ======================
-    # ⏱ STATUS
-    # ======================
-    ultimo = st.session_state.ultimo_status.get(ativo)
+# 🔁 otimização (roda quando atualizar deploy do GitHub Actions)
+resultado_otimo, cfg = otimizar(df)
 
-    if not ultimo or (agora - ultimo).seconds >= 300:
+df_filtrado = filtrar(df)
+resultado_final = backtest(df_filtrado)
 
-        st.session_state.ultimo_status[ativo] = agora
+# =========================
+# 📊 PAINEL PRINCIPAL
+# =========================
 
-        telegram(f"""
-📊 STATUS
+col1, col2, col3, col4 = st.columns(4)
 
-📌 {ativo}
-💰 Preço: {preco}
-📈 Sinal: {sinal}
-""")
+col1.metric("💰 Saldo", resultado_final["saldo"])
+col2.metric("📊 Trades", resultado_final["trades"])
+col3.metric("🟢 Wins", resultado_final["wins"])
+col4.metric("📈 Win Rate", f'{resultado_final["winrate"]}%')
 
-    # ======================
-    # 📊 VISUAL
-    # ======================
-    st.subheader(ativo)
-
-    st.metric("Preço", preco)
-    st.info(f"⏱ Candle fecha em: {tempo_candle()}")
-
-    fig = go.Figure()
-
-    fig.add_trace(go.Candlestick(
-        x=df["datetime"],
-        open=df["open"],
-        high=df["high"],
-        low=df["low"],
-        close=df["close"]
-    ))
-
-    fig.update_layout(template="plotly_dark", height=420, xaxis_rangeslider_visible=False)
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ======================
-    # 📌 SINAL ATUAL
-    # ======================
-    info = st.session_state.sinais.get(ativo, None)
-
-    if info:
-
-        entrada = info["entrada_hora"]
-        saida = entrada + datetime.timedelta(minutes=5)
-
-        st.markdown("### 📊 SINAL ATUAL")
-
-        st.write(f"📌 Direção: {info['tipo']}")
-        st.write(f"💰 Entrada: {info['preco_entrada']}")
-        st.write(f"🎯 Saída: {info['preco_saida']}")
-        st.write(f"🟢 Entrada: {entrada.strftime('%H:%M:%S')}")
-        st.write(f"🔴 Saída: {saida.strftime('%H:%M:%S')}")
-
-    else:
-        st.info("📌 AGUARDANDO OPORTUNIDADE")
-
-    # ======================
-    # ALERTA
-    # ======================
-    if sinal == "COMPRA":
-        st.success("🟢 COMPRA")
-
-    elif sinal == "VENDA":
-        st.error("🔴 VENDA")
-
-    else:
-        st.info("⚪ AGUARDAR")
-
-# ======================
-# 📰 NOTÍCIAS
-# ======================
 st.divider()
-st.subheader("📰 Notícias")
 
-for n in noticias():
-    st.write("🗞️", n["title"])
+# =========================
+# ⚙️ CONFIG ATUAL
+# =========================
+
+st.subheader("⚙️ Configuração Atual (Auto Otimizada)")
+st.write(CONFIG)
+
+st.subheader("🏆 Melhor Resultado Otimização")
+st.json(resultado_otimo)
+
+st.subheader("📊 Resultado Atual")
+st.json(resultado_final)
+
+# =========================
+# 📌 INFO
+# =========================
+
+st.info("Auto otimização roda via GitHub Actions diariamente às 08:00")
