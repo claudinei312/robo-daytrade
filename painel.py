@@ -12,12 +12,12 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô apenas", layout="wide")
-st.title("🤖 Robô apenas")
+st.set_page_config(page_title="Robô 4 indicadores", layout="wide")
+st.title("🤖 Robô 4 indicadores (limpo)")
 
 ATIVO = "EUR/USD"
 
-if st.button("🔄 Atualizar dados"):
+if st.button("🔄 Atualizar"):
     st.rerun()
 
 # ======================
@@ -29,7 +29,7 @@ def pegar_dados():
     df = td.time_series(
         symbol=ATIVO,
         interval="5min",
-        outputsize=5000
+        outputsize=2000
     ).as_pandas()
 
     df = df[::-1].reset_index()
@@ -41,24 +41,21 @@ def pegar_dados():
     return df.dropna().reset_index(drop=True)
 
 # ======================
-# TENDÊNCIA 1H (IMPORTANTE)
+# 1. TENDÊNCIA 1H
 # ======================
 
 def tendencia_1h(df):
     df["EMA50"] = EMAIndicator(df["close"], 50).ema_indicator()
     df["EMA200"] = EMAIndicator(df["close"], 200).ema_indicator()
 
-    ema50 = df["EMA50"].iloc[-1]
-    ema200 = df["EMA200"].iloc[-1]
-
-    if ema50 > ema200:
+    if df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1]:
         return "ALTA"
-    elif ema50 < ema200:
+    elif df["EMA50"].iloc[-1] < df["EMA200"].iloc[-1]:
         return "BAIXA"
     return "LATERAL"
 
 # ======================
-# SUPORTE / RESISTÊNCIA
+# 2. SUPORTE / RESISTÊNCIA
 # ======================
 
 def zonas(df):
@@ -66,32 +63,30 @@ def zonas(df):
     return ult["low"].min(), ult["high"].max()
 
 # ======================
-# VELA FORTE
+# 3. VELA FORTE + PULLBACK
 # ======================
 
 def vela_forte(df):
-    candle = df.iloc[-1]
-
-    corpo = abs(candle["close"] - candle["open"])
-    range_total = candle["high"] - candle["low"]
-
+    c = df.iloc[-1]
+    corpo = abs(c["close"] - c["open"])
+    range_total = c["high"] - c["low"]
     if range_total == 0:
         return False
-
     return corpo / range_total > 0.6
 
+
+def pullback(preco, sup, res):
+    dist_sup = abs(preco - sup)
+    dist_res = abs(preco - res)
+    return dist_sup < dist_res  # simples e funcional
+
 # ======================
-# PULLBACK SIMPLES
+# 4. MACD
 # ======================
 
-def pullback(df, suporte, resistencia):
-    preco = df["close"].iloc[-1]
-
-    dist_sup = abs(preco - suporte)
-    dist_res = abs(preco - resistencia)
-
-    # perto de suporte ou resistência
-    return dist_sup < dist_res
+def get_macd(df):
+    macd = MACD(df["close"])
+    return macd.macd().iloc[-1]
 
 # ======================
 # ESTRATÉGIA
@@ -99,22 +94,17 @@ def pullback(df, suporte, resistencia):
 
 def analisar(df):
 
-    df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
-
-    macd = MACD(df["close"])
-    df["macd"] = macd.macd()
-
     preco = df["close"].iloc[-1]
     sup, res = zonas(df)
 
     trend = tendencia_1h(df)
+    macd = get_macd(df)
 
     score = 0
     erros = []
 
     # ======================
-    # CONTEXTO 1H
+    # TENDÊNCIA 1H
     # ======================
 
     if trend == "ALTA":
@@ -122,25 +112,16 @@ def analisar(df):
     elif trend == "BAIXA":
         score -= 1
     else:
-        erros.append("Mercado lateral")
+        erros.append("Lateral")
 
     # ======================
-    # EMA (entrada)
+    # SUPORTE / RESISTÊNCIA + PULLBACK
     # ======================
 
-    if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
+    if pullback(preco, sup, res):
         score += 1
     else:
-        erros.append("EMA contra")
-
-    # ======================
-    # MACD
-    # ======================
-
-    if df["macd"].iloc[-1] > 0:
-        score += 1
-    else:
-        erros.append("MACD contra")
+        erros.append("Sem pullback")
 
     # ======================
     # VELA FORTE
@@ -152,13 +133,13 @@ def analisar(df):
         erros.append("Sem vela forte")
 
     # ======================
-    # PULLBACK
+    # MACD
     # ======================
 
-    if pullback(df, sup, res):
+    if macd > 0:
         score += 1
     else:
-        erros.append("Sem pullback")
+        erros.append("MACD contra")
 
     # ======================
     # DECISÃO
@@ -168,11 +149,11 @@ def analisar(df):
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
 
-    if score >= 4:
-        return "COMPRA", preco, entrada, saida, erros
-
-    if score <= 1:
-        return "VENDA", preco, entrada, saida, erros
+    if score >= 3:
+        if trend == "ALTA":
+            return "COMPRA", preco, entrada, saida, erros
+        elif trend == "BAIXA":
+            return "VENDA", preco, entrada, saida, erros
 
     return "AGUARDAR", preco, entrada, saida, erros
 
@@ -184,35 +165,27 @@ def backtest(df):
 
     wins = 0
     loss = 0
-    erros_log = []
 
-    for i in range(200, len(df) - 1):
+    for i in range(200, len(df)-1):
 
         sub = df.iloc[:i]
 
-        sinal, _, _, _, erros = analisar(sub)
+        sinal, _, _, _, _ = analisar(sub)
 
         if sinal == "AGUARDAR":
             continue
 
         entrada = df["close"].iloc[i]
-        saida = df["close"].iloc[i + 1]
+        saida = df["close"].iloc[i+1]
 
-        if sinal == "COMPRA":
-            if saida > entrada:
-                wins += 1
-            else:
-                loss += 1
-                erros_log.extend(erros)
+        if sinal == "COMPRA" and saida > entrada:
+            wins += 1
+        elif sinal == "VENDA" and saida < entrada:
+            wins += 1
+        else:
+            loss += 1
 
-        if sinal == "VENDA":
-            if saida < entrada:
-                wins += 1
-            else:
-                loss += 1
-                erros_log.extend(erros)
-
-    return wins, loss, erros_log
+    return wins, loss
 
 # ======================
 # EXECUÇÃO
@@ -220,64 +193,19 @@ def backtest(df):
 
 df = pegar_dados()
 
-trend = tendencia_1h(df)
-st.write("📊 Tendência 1H:", trend)
-
 sinal, preco, entrada, saida, erros = analisar(df)
 
-st.metric("💰 Preço atual", preco)
+st.metric("Preço", preco)
 
-# ======================
-# SINAL
-# ======================
+st.write("Sinal:", sinal)
+st.write("Erros:", erros)
 
-if sinal == "COMPRA":
-    st.success(f"""
-🟢 COMPRA
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
-
-elif sinal == "VENDA":
-    st.error(f"""
-🔴 VENDA
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
-
-else:
-    st.warning("⚪ AGUARDAR")
-
-# ======================
-# ERROS
-# ======================
-
-st.subheader("⚠️ Motivos para não entrar forte")
-
-for e in erros:
-    st.write("-", e)
-
-# ======================
-# BACKTEST
-# ======================
-
-if st.button("📊 Rodar Backtest"):
-
-    wins, loss, erros_log = backtest(df)
-
-    total = wins + loss
-    taxa = (wins / total * 100) if total > 0 else 0
-
-    st.subheader("📈 Resultado")
-
-    st.write("✅ Wins:", wins)
-    st.write("❌ Loss:", loss)
-    st.write(f"🎯 Assertividade: {taxa:.2f}%")
-
-    st.subheader("⚠️ Erros mais comuns")
-
-    for e in set(erros_log):
-        st.write("-", e)
+if st.button("Backtest"):
+    w, l = backtest(df)
+    total = w + l
+    st.write("Wins:", w)
+    st.write("Loss:", l)
+    st.write("Winrate:", (w/total*100 if total else 0))
 
 # ======================
 # GRÁFICO
