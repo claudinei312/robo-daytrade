@@ -81,7 +81,9 @@ def tempo_candle():
 # ======================
 @st.cache_data(ttl=300)
 def noticias():
+
     url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
+
     try:
         return requests.get(url).json().get("articles", [])
     except:
@@ -111,7 +113,7 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 🧠 ESTRATÉGIA (NÃO ALTERADA)
+# 🧠 ESTRATÉGIA (SEM ALTERAÇÃO)
 # ======================
 def analisar(df):
 
@@ -147,35 +149,6 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 FILTROS NOVOS (IMPLEMENTADO)
-# ======================
-def filtros_avancados(df):
-
-    motivos = []
-
-    # Candle mais confiável
-    body = abs(df["close"].iloc[-1] - df["open"].iloc[-1])
-    rng = df["high"].iloc[-1] - df["low"].iloc[-1]
-    if rng == 0 or body < rng * 0.5:
-        motivos.append("CANDLE_FRACO")
-
-    # Tendência real (evita lateralização)
-    ma9 = SMAIndicator(df["close"], 9).sma_indicator().iloc[-1]
-    ma21 = SMAIndicator(df["close"], 21).sma_indicator().iloc[-1]
-
-    if abs(ma9 - ma21) < 0.00020:
-        motivos.append("SEM_TENDENCIA")
-
-    # Volatilidade mínima melhorada
-    vol = df["high"].rolling(10).max().iloc[-1] - df["low"].rolling(10).min().iloc[-1]
-    preco = df["close"].iloc[-1]
-
-    if vol < preco * 0.0006:
-        motivos.append("BAIXA_VOLATILIDADE")
-
-    return len(motivos) == 0, motivos
-
-# ======================
 # 🧠 ESTADO GLOBAL
 # ======================
 if "sinais" not in st.session_state:
@@ -197,17 +170,7 @@ for ativo in ativos:
     st.markdown("---")
 
     df = dados[ativo]
-
     sinal, preco, stop, alvo = analisar(df)
-
-    # ======================
-    # 🧠 APLICA FILTROS NOVOS
-    # ======================
-    ok, motivos = filtros_avancados(df)
-
-    if not ok:
-        sinal = "AGUARDAR"
-
     agora = datetime.datetime.now()
 
     # ======================
@@ -240,7 +203,7 @@ for ativo in ativos:
 """)
 
     # ======================
-    # ⏱ STATUS
+    # ⏱ STATUS A CADA 5 MIN
     # ======================
     ultimo = st.session_state.ultimo_status.get(ativo)
 
@@ -265,10 +228,6 @@ for ativo in ativos:
 
     st.metric("Preço", preco)
     st.info(f"⏱ Candle fecha em: {tempo_candle()}")
-
-    # debug filtros
-    if motivos:
-        st.warning(f"Filtros ativos: {', '.join(motivos)}")
 
     fig = go.Figure()
 
