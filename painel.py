@@ -77,7 +77,7 @@ def tempo_candle():
     return f"{4 - minuto:02d}:{59 - segundo:02d}"
 
 # ======================
-# 📰 NOTÍCIAS (CORRIGIDO)
+# 📰 NOTÍCIAS
 # ======================
 @st.cache_data(ttl=300)
 def noticias():
@@ -149,10 +149,13 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 ESTADO
+# 🧠 ESTADO GLOBAL
 # ======================
 if "sinais" not in st.session_state:
     st.session_state.sinais = {}
+
+if "ultimo_status" not in st.session_state:
+    st.session_state.ultimo_status = {}
 
 # ======================
 # 📥 DADOS
@@ -171,7 +174,7 @@ for ativo in ativos:
     agora = datetime.datetime.now()
 
     # ======================
-    # REGISTRAR SINAL
+    # 🚨 SINAL PRINCIPAL
     # ======================
     if sinal in ["COMPRA", "VENDA"]:
 
@@ -187,8 +190,10 @@ for ativo in ativos:
             agora_txt = agora.strftime("%H:%M:%S")
 
             telegram(f"""
-📊 SINAL {ativo}
-Direção: {sinal}
+🚨 SINAL DE TRADE
+
+📊 Ativo: {ativo}
+📈 Direção: {sinal}
 
 💰 Entrada: {preco}
 🎯 Saída: {alvo}
@@ -198,7 +203,26 @@ Direção: {sinal}
 """)
 
     # ======================
-    # EXIBIÇÃO
+    # ⏱ STATUS A CADA 5 MIN
+    # ======================
+    ultimo = st.session_state.ultimo_status.get(ativo)
+
+    if not ultimo or (agora - ultimo).seconds >= 300:
+
+        st.session_state.ultimo_status[ativo] = agora
+
+        telegram(f"""
+📊 STATUS DO ATIVO
+
+📌 {ativo}
+💰 Preço atual: {preco}
+📈 Sinal: {sinal}
+
+⏱ Atualização automática (5 min)
+""")
+
+    # ======================
+    # 📊 EXIBIÇÃO
     # ======================
     st.subheader(ativo)
 
@@ -220,7 +244,7 @@ Direção: {sinal}
     st.plotly_chart(fig, use_container_width=True)
 
     # ======================
-    # PAINEL DO SINAL
+    # 📌 PAINEL DO SINAL
     # ======================
     info = st.session_state.sinais.get(ativo, None)
 
@@ -241,7 +265,7 @@ Direção: {sinal}
         st.info("📌 Possível entrada: AGUARDAR")
 
     # ======================
-    # ALERTA
+    # ALERTA VISUAL
     # ======================
     if sinal == "COMPRA":
         st.success("🟢 COMPRA")
