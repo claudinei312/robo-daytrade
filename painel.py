@@ -55,20 +55,19 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# 🔥 SUPORTE CORRIGIDO (APENAS ISSO)
+# SUPORTE (AJUSTE LEVE SEM MUDAR ESTRATÉGIA)
 # ======================
 
 def zonas(df):
     ult = df.tail(200)
 
-    # suporte = região de maior concentração de mínimas recentes
     suporte = ult["low"].rolling(20).min().median()
     resistencia = ult["high"].rolling(20).max().median()
 
     return suporte, resistencia
 
 # ======================
-# ESTRATÉGIA (SEM MUDANÇAS)
+# ESTRATÉGIA (SEM MUDANÇAS LÓGICAS)
 # ======================
 
 def analisar(df):
@@ -87,6 +86,10 @@ def analisar(df):
     score = 0
     erros = []
 
+    # ======================
+    # CONTEXTO
+    # ======================
+
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -94,10 +97,18 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
+    # ======================
+    # EMA
+    # ======================
+
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
+
+    # ======================
+    # MACD
+    # ======================
 
     if df["macd"].iloc[-1] > 0:
         score += 1
@@ -105,13 +116,12 @@ def analisar(df):
         erros.append("MACD contra")
 
     # ======================
-    # 🔥 DISTÂNCIA DO SUPORTE CORRIGIDA
+    # SUPORTE (CORRIGIDO SEM MUDAR ESTRATÉGIA)
     # ======================
 
     range_total = res - sup
     distancia = abs(preco - sup)
 
-    # evita erro quando range é pequeno
     if range_total > 0:
         if distancia <= range_total * 0.20:
             score += 1
@@ -121,7 +131,7 @@ def analisar(df):
         erros.append("Suporte inválido")
 
     # ======================
-    # DECISÃO (IGUAL ORIGINAL)
+    # DECISÃO
     # ======================
 
     agora = datetime.datetime.now()
@@ -137,14 +147,14 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST (NÃO ALTERADO)
+# BACKTEST (AGORA COM MOTIVO REAL DE LOSS)
 # ======================
 
 def backtest(df):
 
     wins = 0
     loss = 0
-    erros_log = []
+    detalhes_loss = []
 
     for i in range(200, len(df)-1):
 
@@ -168,16 +178,26 @@ def backtest(df):
                 wins += 1
             else:
                 loss += 1
-                erros_log.extend(erros)
+                detalhes_loss.append({
+                    "hora": df["datetime"].iloc[i],
+                    "tipo": "COMPRA",
+                    "preco": entrada,
+                    "erros": erros
+                })
 
         if sinal == "VENDA":
             if saida < entrada:
                 wins += 1
             else:
                 loss += 1
-                erros_log.extend(erros)
+                detalhes_loss.append({
+                    "hora": df["datetime"].iloc[i],
+                    "tipo": "VENDA",
+                    "preco": entrada,
+                    "erros": erros
+                })
 
-    return wins, loss, erros_log
+    return wins, loss, detalhes_loss
 
 # ======================
 # EXECUÇÃO
@@ -191,6 +211,10 @@ st.write("📊 Tendência:", trend)
 sinal, preco, entrada, saida, erros = analisar(df)
 
 st.metric("💰 Preço atual", preco)
+
+# ======================
+# SINAL
+# ======================
 
 if sinal == "COMPRA":
     st.success(f"""
@@ -211,14 +235,22 @@ Saída: {saida.strftime('%H:%M')}
 else:
     st.warning("⚪ AGUARDAR")
 
+# ======================
+# ERROS ATUAIS
+# ======================
+
 st.subheader("⚠️ Motivos para não entrar forte")
 
 for e in erros:
     st.write("-", e)
 
+# ======================
+# BACKTEST
+# ======================
+
 if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
 
-    wins, loss, erros_log = backtest(df)
+    wins, loss, detalhes_loss = backtest(df)
 
     total = wins + loss
     taxa = (wins / total * 100) if total > 0 else 0
@@ -229,10 +261,18 @@ if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
     st.write("❌ Loss:", loss)
     st.write(f"🎯 Assertividade: {taxa:.2f}%")
 
-    st.subheader("⚠️ Principais erros")
+    st.subheader("❌ Motivos reais dos Loss")
 
-    for e in set(erros_log):
-        st.write("-", e)
+    for d in detalhes_loss[:10]:
+        st.write("Hora:", d["hora"])
+        st.write("Tipo:", d["tipo"])
+        st.write("Preço:", d["preco"])
+        st.write("Erros:", d["erros"])
+        st.write("---")
+
+# ======================
+# GRÁFICO
+# ======================
 
 fig = go.Figure()
 
