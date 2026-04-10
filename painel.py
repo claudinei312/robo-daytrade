@@ -7,7 +7,7 @@ from ta.momentum import RSIIndicator
 from datetime import datetime
 
 # ======================
-# 🔐 CONFIGURAÇÃO
+# 🔐 CONFIG
 # ======================
 API_KEY = st.secrets["API_KEY"]
 NEWS_API = st.secrets["NEWS_API"]
@@ -17,44 +17,63 @@ td = TDClient(apikey=API_KEY)
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
 st.set_page_config(layout="wide")
-st.title("📊 ROBÔ DAY TRADE FINAL (PRO)")
+st.title("📊 ROBÔ DAY TRADE FINAL PRO")
 
 # ======================
-# 📥 DADOS DE MERCADO
+# 🟢 BOTÃO LIGA/DESLIGA
+# ======================
+rodando = st.toggle("🟢 Ativar Robô", value=True)
+
+if not rodando:
+    st.warning("⛔ Robô pausado")
+    st.stop()
+
+# ======================
+# 🕐 PRÓXIMA VELA M5
+# ======================
+def proxima_vela_m5():
+    agora = datetime.now()
+
+    minuto = (agora.minute // 5 + 1) * 5
+    hora = agora.hour
+
+    if minuto == 60:
+        minuto = 0
+        hora += 1
+
+    return agora.replace(hour=hora, minute=minuto, second=0, microsecond=0)
+
+# ======================
+# 📥 DADOS
 # ======================
 @st.cache_data(ttl=240)
 def pegar_dados(ativo):
-    try:
-        df = td.time_series(
-            symbol=ativo,
-            interval="5min",
-            outputsize=300
-        ).as_pandas()
+    df = td.time_series(
+        symbol=ativo,
+        interval="5min",
+        outputsize=300
+    ).as_pandas()
 
-        df = df[::-1].reset_index(drop=True)
+    df = df[::-1].reset_index(drop=True)
 
-        for c in ["open", "high", "low", "close"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
+    for c in ["open", "high", "low", "close"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
 
-        return df.dropna()
-
-    except Exception as e:
-        st.error(f"Erro {ativo}: {e}")
-        return None
+    return df.dropna()
 
 # ======================
 # 📰 NOTÍCIAS
 # ======================
 @st.cache_data(ttl=300)
 def pegar_noticias():
+    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&sortBy=publishedAt&pageSize=5&apiKey={NEWS_API}"
     try:
-        url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&sortBy=publishedAt&pageSize=5&apiKey={NEWS_API}"
         return requests.get(url).json()["articles"]
     except:
         return []
 
 # ======================
-# 🧠 ESTRATÉGIA FINAL
+# 🧠 ESTRATÉGIA
 # ======================
 def analisar(df):
     df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
@@ -72,13 +91,11 @@ def analisar(df):
     if lateral:
         return "AGUARDAR", preco, 0, 0
 
-    # 🔥 COMPRA
     if ma9 > ma21 and preco <= suporte * 1.001:
         stop = suporte
         alvo = preco + (preco - stop) * 2
         return "COMPRA", preco, stop, alvo
 
-    # 🔥 VENDA
     if ma9 < ma21 and preco >= resistencia * 0.999:
         stop = resistencia
         alvo = preco - (stop - preco) * 2
@@ -87,8 +104,10 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 📊 PAINEL
+# 📊 PAINEL PRINCIPAL
 # ======================
+entrada = proxima_vela_m5()
+
 col1, col2, col3 = st.columns(3)
 
 for i, ativo in enumerate(ativos):
@@ -100,17 +119,19 @@ for i, ativo in enumerate(ativos):
         if df is not None:
             sinal, preco, stop, alvo = analisar(df)
 
-            st.metric("Preço", f"{preco:.5f}")
+            st.metric("Preço Atual", f"{preco:.5f}")
 
             if sinal == "COMPRA":
                 st.success("🟢 COMPRA CONFIRMADA")
-                st.write("Stop:", stop)
-                st.write("Alvo:", alvo)
+                st.write("📍 Entrada:", entrada.strftime("%H:%M"))
+                st.write("🛑 Stop:", stop)
+                st.write("🎯 Alvo:", alvo)
 
             elif sinal == "VENDA":
                 st.error("🔴 VENDA CONFIRMADA")
-                st.write("Stop:", stop)
-                st.write("Alvo:", alvo)
+                st.write("📍 Entrada:", entrada.strftime("%H:%M"))
+                st.write("🛑 Stop:", stop)
+                st.write("🎯 Alvo:", alvo)
 
             else:
                 st.info("⚪ AGUARDAR")
@@ -119,7 +140,7 @@ for i, ativo in enumerate(ativos):
 # 📰 NOTÍCIAS
 # ======================
 st.divider()
-st.subheader("📰 Notícias Forex em tempo real")
+st.subheader("📰 Notícias Forex")
 
 news = pegar_noticias()
 
