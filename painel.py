@@ -16,10 +16,10 @@ td = TDClient(apikey=API_KEY)
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
 st.set_page_config(layout="wide")
-st.title("📊 ROBÔ DAY TRADE PRO")
+st.title("📊 ROBÔ DAY TRADE V2 (LUCRATIVO)")
 
 # ======================
-# 🟢 LIGA / DESLIGA
+# 🟢 BOTÃO LIGA / DESLIGA
 # ======================
 rodando = st.toggle("🟢 Ativar Robô", value=True)
 
@@ -74,7 +74,7 @@ def pegar_noticias():
         return []
 
 # ======================
-# 🧠 LÓGICA FINAL
+# 🧠 LÓGICA V2 (PROFISSIONAL)
 # ======================
 def analisar(df):
     df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
@@ -87,18 +87,22 @@ def analisar(df):
     suporte = df["low"].rolling(20).min().iloc[-1]
     resistencia = df["high"].rolling(20).max().iloc[-1]
 
-    lateral = abs(ma9 - ma21) < 0.00015
+    # ======================
+    # 📉 FILTROS PROFISSIONAIS
+    # ======================
+    tendencia_forte = abs(ma9 - ma21) > 0.00025
 
-    distancia_sup = abs(preco - suporte)
-    distancia_res = abs(preco - resistencia)
+    candle_body = abs(df["close"].iloc[-1] - df["open"].iloc[-1])
+    candle_range = df["high"].iloc[-1] - df["low"].iloc[-1]
+
+    forca_candle = candle_body > (candle_range * 0.6)
+
+    lateral = abs(ma9 - ma21) < 0.00015
 
     # ======================
     # ⚪ AGUARDAR
     # ======================
-    if lateral:
-        return "AGUARDAR", preco, 0, 0
-
-    if distancia_sup > preco * 0.002 and distancia_res > preco * 0.002:
+    if lateral or not tendencia_forte or not forca_candle:
         return "AGUARDAR", preco, 0, 0
 
     # ======================
@@ -111,7 +115,7 @@ def analisar(df):
         return "ALERTA_VENDA", preco, 0, 0
 
     # ======================
-    # 🟢 / 🔴 ENTRADA REAL
+    # 🟢 ENTRADA REAL
     # ======================
     if ma9 > ma21 and preco <= suporte * 1.001:
         stop = suporte
