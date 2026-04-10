@@ -8,14 +8,14 @@ from ta.momentum import RSIIndicator
 import datetime
 
 # ======================
-# CONFIG API (INSERIDA)
+# CONFIG API
 # ======================
 
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
 st.set_page_config(page_title="Robô Pro", layout="wide")
-st.title("🤖 Robô Pro - Versão Completa")
+st.title("🤖 Robô Pro Estável")
 
 ATIVO = "EUR/USD"
 
@@ -68,7 +68,6 @@ def detectar_zonas(df, tol=0.0015):
     sup_zones = []
     res_zones = []
 
-    # suporte
     for i in range(len(lows)):
         base = lows[i]
         touches = np.sum(np.abs(lows - base) / base < tol)
@@ -76,7 +75,6 @@ def detectar_zonas(df, tol=0.0015):
         if touches >= 2:
             sup_zones.append(base)
 
-    # resistência
     for i in range(len(highs)):
         base = highs[i]
         touches = np.sum(np.abs(highs - base) / base < tol)
@@ -84,8 +82,8 @@ def detectar_zonas(df, tol=0.0015):
         if touches >= 2:
             res_zones.append(base)
 
-    suporte = np.mean(sup_zones) if sup_zones else np.min(lows)
-    resistencia = np.mean(res_zones) if res_zones else np.max(highs)
+    suporte = np.mean(sup_zones) if len(sup_zones) > 0 else np.min(lows)
+    resistencia = np.mean(res_zones) if len(res_zones) > 0 else np.max(highs)
 
     return suporte, resistencia
 
@@ -109,7 +107,6 @@ def analisar(df):
     score = 0
     erros = []
 
-    # tendência
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -117,19 +114,16 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
-    # EMA
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
 
-    # RSI
     if df["RSI"].iloc[-1] > 50:
         score += 1
     else:
         erros.append("RSI fraco")
 
-    # MACD
     if df["MACD"].iloc[-1] > 0:
         score += 1
     else:
@@ -160,7 +154,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST
+# BACKTEST (CORRIGIDO E ESTÁVEL)
 # ======================
 
 def backtest(df):
@@ -171,7 +165,12 @@ def backtest(df):
 
     df = df.reset_index(drop=True)
 
-    for i in range(200, len(df) - 2):
+    # proteção mínima
+    if len(df) < 250:
+        st.error("Poucos dados para backtest (mínimo 250 candles)")
+        return 0, 0, []
+
+    for i in range(200, len(df) - 3):
 
         hora = df["datetime"].iloc[i].hour
 
@@ -189,14 +188,16 @@ def backtest(df):
         exit_ = df["open"].iloc[i + 2]
 
         if sinal == "COMPRA":
-            result = "WIN" if exit_ > entry else "LOSS"
+            win = exit_ > entry
         else:
-            result = "WIN" if exit_ < entry else "LOSS"
+            win = exit_ < entry
 
-        if result == "WIN":
+        if win:
             wins += 1
+            result = "WIN"
         else:
             loss += 1
+            result = "LOSS"
 
         trades.append({
             "time": df["datetime"].iloc[i],
@@ -251,6 +252,12 @@ if st.button("📊 Rodar Backtest"):
     st.write("✅ Wins:", wins)
     st.write("❌ Loss:", loss)
     st.write(f"🎯 Assertividade: {taxa:.2f}%")
+
+    st.subheader("📌 Trades")
+
+    for t in trades[:15]:
+        st.write("----")
+        st.write(t)
 
 # ======================
 # GRÁFICO
