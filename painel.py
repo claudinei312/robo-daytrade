@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
+import numpy as np
 import datetime
 
 # ======================
@@ -56,13 +57,44 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# SUPORTE / RESISTÊNCIA
+# 🔥 NOVO: SUPORTE/RESISTÊNCIA POR 2 TOQUES
 # ======================
 
-def zonas(df):
-    ult = df.tail(144)
-    suporte = ult["low"].min()
-    resistencia = ult["high"].max()
+def detectar_zonas(df, tol=0.0015):
+
+    lows = df["low"].values
+    highs = df["high"].values
+
+    zonas_sup = []
+    zonas_res = []
+
+    # detectar clusters de suporte
+    for i in range(len(lows)):
+        count = 0
+        base = lows[i]
+
+        for j in range(len(lows)):
+            if abs(lows[j] - base) / base < tol:
+                count += 1
+
+        if count >= 2:
+            zonas_sup.append(base)
+
+    # detectar clusters de resistência
+    for i in range(len(highs)):
+        count = 0
+        base = highs[i]
+
+        for j in range(len(highs)):
+            if abs(highs[j] - base) / base < tol:
+                count += 1
+
+        if count >= 2:
+            zonas_res.append(base)
+
+    suporte = np.mean(zonas_sup) if zonas_sup else df["low"].min()
+    resistencia = np.mean(zonas_res) if zonas_res else df["high"].max()
+
     return suporte, resistencia
 
 # ======================
@@ -80,13 +112,12 @@ def analisar(df):
 
     preco = df["close"].iloc[-1]
 
-    sup, res = zonas(df)
+    sup, res = detectar_zonas(df)
     trend = tendencia(df)
 
     score = 0
     erros = []
 
-    # CONTEXTO
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -94,29 +125,32 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
-    # EMA
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
 
-    # RSI
     if df["RSI"].iloc[-1] > 50:
         score += 1
     else:
         erros.append("RSI fraco")
 
-    # MACD
     if df["macd"].iloc[-1] > 0:
         score += 1
     else:
         erros.append("MACD contra")
 
-    # SUPORTE (mantido)
-    if abs(preco - sup) < (res - sup)*0.3:
-        score += 1
-    else:
-        erros.append("Longe do suporte")
+    # 🔥 NOVO FILTRO: estrutura real
+    range_total = res - sup
+
+    if range_total > 0:
+        dist_sup = (preco - sup) / range_total
+        dist_res = (res - preco) / range_total
+
+        if dist_sup > 0.8:
+            erros.append("Preço esticado (SUPORTE)")
+        if dist_res > 0.8:
+            erros.append("Preço esticado (RESISTÊNCIA)")
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
@@ -131,7 +165,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# 🔥 BACKTEST PROFISSIONAL (ATUALIZADO)
+# BACKTEST (ATUALIZADO)
 # ======================
 
 def backtest(df):
@@ -155,39 +189,6 @@ def backtest(df):
 
         if sinal == "AGUARDAR":
             continue
-
-        # ======================
-        # FILTRO PROFISSIONAL (EXTENSÃO DE PREÇO)
-        # ======================
-
-        sup, res = zonas(sub)
-
-        preco = df["close"].iloc[i]
-
-        range_total = res - sup
-
-        if range_total == 0:
-            continue
-
-        dist_sup = preco - sup
-        dist_res = res - preco
-
-        ext_sup = dist_sup / range_total
-        ext_res = dist_res / range_total
-
-        overextended_buy = ext_sup > 0.75
-        overextended_sell = ext_res > 0.75
-
-        # bloqueio inteligente
-        if sinal == "COMPRA" and overextended_buy:
-            continue
-
-        if sinal == "VENDA" and overextended_sell:
-            continue
-
-        # ======================
-        # EXECUÇÃO REALISTA
-        # ======================
 
         entry = df["open"].iloc[i + 1]
         exit_ = df["open"].iloc[i + 2]
