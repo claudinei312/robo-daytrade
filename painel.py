@@ -39,20 +39,19 @@ def pegar_dados():
     for c in ["open", "high", "low", "close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    df = df.dropna().reset_index(drop=True)
-    return df
+    return df.dropna().reset_index(drop=True)
 
 # ======================
 # TENDÊNCIA
 # ======================
 
 def tendencia(df):
-    df["EMA50"] = EMAIndicator(df["close"], 50).ema_indicator()
-    df["EMA200"] = EMAIndicator(df["close"], 200).ema_indicator()
+    ema50 = EMAIndicator(df["close"], 50).ema_indicator().iloc[-1]
+    ema200 = EMAIndicator(df["close"], 200).ema_indicator().iloc[-1]
 
-    if df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1]:
+    if ema50 > ema200:
         return "ALTA"
-    elif df["EMA50"].iloc[-1] < df["EMA200"].iloc[-1]:
+    elif ema50 < ema200:
         return "BAIXA"
     return "LATERAL"
 
@@ -62,10 +61,8 @@ def tendencia(df):
 
 def zonas(df):
     ult = df.tail(144)
-
     suporte = ult["low"].min()
     resistencia = ult["high"].max()
-
     return suporte, resistencia
 
 # ======================
@@ -83,7 +80,6 @@ def analisar(df):
     df["adx"] = ADXIndicator(df["high"], df["low"], df["close"], 14).adx()
 
     preco = df["close"].iloc[-1]
-
     sup, res = zonas(df)
     trend = tendencia(df)
 
@@ -91,7 +87,7 @@ def analisar(df):
     erros = []
 
     # ======================
-    # ADX (FILTRO DE SEGURANÇA)
+    # ADX FILTRO
     # ======================
 
     adx_val = df["adx"].iloc[-1]
@@ -175,16 +171,23 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST (CORRIGIDO)
+# BACKTEST OTIMIZADO (SEM TRAVAR)
 # ======================
 
 def backtest(df):
 
+    df = df.dropna().reset_index(drop=True)
+
+    # pré-cálculo (IMPORTANTE PARA PERFORMANCE)
+    df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
+    df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
+    df["RSI"] = RSIIndicator(df["close"], 14).rsi()
+    df["macd"] = MACD(df["close"]).macd()
+    df["adx"] = ADXIndicator(df["high"], df["low"], df["close"], 14).adx()
+
     wins = 0
     loss = 0
     erros_log = []
-
-    df = df.dropna().reset_index(drop=True)
 
     for i in range(200, len(df) - 2):
 
@@ -193,25 +196,67 @@ def backtest(df):
         if hora < 8 or hora > 12:
             continue
 
-        sub = df.iloc[:i]
+        adx_val = df["adx"].iloc[i]
 
-        sinal, _, _, _, erros = analisar(sub)
-
-        if sinal == "AGUARDAR":
+        if pd.isna(adx_val) or adx_val < 20:
             continue
 
-        entrada = df["close"].iloc[i]
+        ema9 = df["EMA9"].iloc[i]
+        ema21 = df["EMA21"].iloc[i]
+        rsi = df["RSI"].iloc[i]
+        macd = df["macd"].iloc[i]
+
+        preco = df["close"].iloc[i]
         saida = df["close"].iloc[i + 1]
 
-        if sinal == "COMPRA":
-            if saida > entrada:
+        sup = df["low"].tail(144).min()
+        res = df["high"].tail(144).max()
+
+        score = 0
+        erros = []
+
+        # EMA
+        if ema9 > ema21:
+            score += 1
+        else:
+            erros.append("EMA contra")
+
+        trend = "ALTA" if ema9 > ema21 else "BAIXA"
+
+        # RSI
+        if trend == "ALTA":
+            if 50 <= rsi <= 70:
+                score += 1
+            else:
+                erros.append("RSI fora compra")
+        else:
+            if 30 <= rsi <= 50:
+                score += 1
+            else:
+                erros.append("RSI fora venda")
+
+        # MACD
+        if macd > 0:
+            score += 1
+        else:
+            erros.append("MACD contra")
+
+        # SUPORTE
+        if abs(preco - sup) < (res - sup) * 0.3:
+            score += 1
+        else:
+            erros.append("Longe do suporte")
+
+        # RESULTADO
+        if score >= 4:
+            if saida > preco:
                 wins += 1
             else:
                 loss += 1
                 erros_log.extend(erros)
 
-        elif sinal == "VENDA":
-            if saida < entrada:
+        elif score <= -3:
+            if saida < preco:
                 wins += 1
             else:
                 loss += 1
@@ -233,21 +278,9 @@ sinal, preco, entrada, saida, erros = analisar(df)
 st.metric("💰 Preço atual", preco)
 
 if sinal == "COMPRA":
-    st.success(f"""
-🟢 COMPRA
-
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
-
+    st.success(f"🟢 COMPRA\nEntrada: {entrada.strftime('%H:%M')}\nSaída: {saida.strftime('%H:%M')}")
 elif sinal == "VENDA":
-    st.error(f"""
-🔴 VENDA
-
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
-
+    st.error(f"🔴 VENDA\nEntrada: {entrada.strftime('%H:%M')}\nSaída: {saida.strftime('%H:%M')}")
 else:
     st.warning("⚪ AGUARDAR")
 
