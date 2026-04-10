@@ -1,6 +1,6 @@
 # =====================================================
-# 🤖 ROBÔ SNIPER PRO - AUTO OTIMIZADO (VERSÃO ATUALIZADA)
-# USD/JPY ONLY + BACKTEST + AUTO OPTIMIZER + STREAMLIT
+# 🤖 ROBÔ SNIPER PRO - AUTO OTIMIZADOR USD/JPY
+# Streamlit + Backtest + Auto Optimization
 # =====================================================
 
 import streamlit as st
@@ -8,10 +8,11 @@ import pandas as pd
 from twelvedata import TDClient
 
 # =========================
-# ⚙️ CONFIG ATUALIZADA
+# 🔐 API KEY SEGURA
 # =========================
 
-API_KEY = "SUA_API_KEY"
+API_KEY = st.secrets["API_KEY"]
+
 ATIVO = "USD/JPY"
 
 CONFIG = {
@@ -20,7 +21,7 @@ CONFIG = {
 }
 
 # =========================
-# 📊 PEGAR DADOS
+# 📊 DADOS
 # =========================
 
 def pegar_dados(ativo):
@@ -33,15 +34,15 @@ def pegar_dados(ativo):
     ).as_pandas()
 
     df = df.sort_index()
-
     return df
 
 # =========================
-# 🔧 FILTRO (igual seu estilo)
+# 🔧 ESTRATÉGIA
 # =========================
 
 def filtrar(df):
     df = df.copy()
+
     df["ma_fast"] = df["close"].rolling(CONFIG["ma_fast"]).mean()
     df["ma_slow"] = df["close"].rolling(CONFIG["ma_slow"]).mean()
 
@@ -52,7 +53,7 @@ def filtrar(df):
     return df
 
 # =========================
-# 📈 BACKTEST (15 dias simulado)
+# 📈 BACKTEST
 # =========================
 
 def backtest(df):
@@ -103,7 +104,7 @@ def otimizar(df):
     ]
 
     melhor = None
-    melhor_cfg = None
+    melhor_cfg = (9, 21)
 
     for f, s in combinacoes:
 
@@ -123,50 +124,56 @@ def otimizar(df):
     return melhor, melhor_cfg
 
 # =========================
-# 🖥️ STREAMLIT PAINEL
+# 🖥️ STREAMLIT UI
 # =========================
 
-st.set_page_config(page_title="Sniper Pro Auto", layout="wide")
+st.set_page_config(page_title="Sniper Pro USD/JPY", layout="wide")
 
 st.title("🤖 Sniper Pro - Auto Otimizador USD/JPY")
 
-# 📊 dados
+# =========================
+# 📊 DATA LOAD
+# =========================
+
 df = pegar_dados(ATIVO)
 
-# 🔁 otimização (roda quando atualizar deploy do GitHub Actions)
-resultado_otimo, cfg = otimizar(df)
-
-df_filtrado = filtrar(df)
-resultado_final = backtest(df_filtrado)
+if df is None or df.empty:
+    st.error("Erro ao carregar dados da API")
+    st.stop()
 
 # =========================
-# 📊 PAINEL PRINCIPAL
+# 🤖 OTIMIZAÇÃO
+# =========================
+
+melhor, cfg = otimizar(df)
+
+# =========================
+# 📊 RESULTADO FINAL
+# =========================
+
+df_final = filtrar(df)
+resultado = backtest(df_final)
+
+# =========================
+# 📊 PAINEL
 # =========================
 
 col1, col2, col3, col4 = st.columns(4)
 
-col1.metric("💰 Saldo", resultado_final["saldo"])
-col2.metric("📊 Trades", resultado_final["trades"])
-col3.metric("🟢 Wins", resultado_final["wins"])
-col4.metric("📈 Win Rate", f'{resultado_final["winrate"]}%')
+col1.metric("💰 Saldo", resultado["saldo"])
+col2.metric("📊 Trades", resultado["trades"])
+col3.metric("🟢 Wins", resultado["wins"])
+col4.metric("📈 Win Rate", f'{resultado["winrate"]}%')
 
 st.divider()
-
-# =========================
-# ⚙️ CONFIG ATUAL
-# =========================
 
 st.subheader("⚙️ Configuração Atual (Auto Otimizada)")
 st.write(CONFIG)
 
-st.subheader("🏆 Melhor Resultado Otimização")
-st.json(resultado_otimo)
+st.subheader("🏆 Melhor Estratégia Encontrada")
+st.json(melhor)
 
 st.subheader("📊 Resultado Atual")
-st.json(resultado_final)
+st.json(resultado)
 
-# =========================
-# 📌 INFO
-# =========================
-
-st.info("Auto otimização roda via GitHub Actions diariamente às 08:00")
+st.info("⚡ Atualização automática via GitHub Actions às 08:00")
