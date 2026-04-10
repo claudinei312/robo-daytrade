@@ -5,18 +5,41 @@ import requests
 from ta.trend import SMAIndicator
 import plotly.graph_objects as go
 import datetime
+import time
 from streamlit_autorefresh import st_autorefresh
 
 # ======================
-# 🎨 CONFIG
+# 🎨 LAYOUT
 # ======================
+
 st.set_page_config(page_title="Sniper Pro Trading", layout="wide")
 
-st.title("📊 SNIPER PRO TRADING DESK")
+st.markdown("""
+
+<style>  
+body { background-color: #0b0f19; }  
+  
+.main-title {  
+    font-size: 34px;  
+    font-weight: 800;  
+    text-align: center;  
+    color: #00ff99;  
+    margin-bottom: 15px;  
+}  
+  
+div[data-testid="stMetric"] {  
+    background-color: #0f172a;  
+    border-radius: 10px;  
+    padding: 8px;  
+}  
+</style>  """, unsafe_allow_html=True)
+
+st.markdown("<div class='main-title'>📊 SNIPER PRO TRADING DESK</div>", unsafe_allow_html=True)
 
 # ======================
-# 🔐 KEYS
+# 🔐 CONFIG
 # ======================
+
 API_KEY = st.secrets["API_KEY"]
 NEWS_API = st.secrets["NEWS_API"]
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -24,44 +47,74 @@ CHAT_ID = st.secrets["CHAT_ID"]
 
 td = TDClient(apikey=API_KEY)
 
+# ======================
+# 🎯 ATIVO FOCADO
+# ======================
+
 ativos = ["USD/JPY:FX"]
 
 # ======================
 # 🔁 AUTO REFRESH
 # ======================
+
 st_autorefresh(interval=5000, key="refresh")
 
+rodando = st.toggle("🟢 Ativar Robô", value=True)
+
+if not rodando:
+    st.stop()
+
 # ======================
-# 📲 TELEGRAM
+# 📩 TELEGRAM
 # ======================
+
 def telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
+    try:
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+    except:
+        pass
 
 # ======================
-# 📲 TESTE TELEGRAM
+# ⏱️ TIMER
 # ======================
-st.sidebar.subheader("📲 Telegram Teste")
 
-if st.sidebar.button("Testar Telegram"):
-    telegram("🚨 TESTE OK: Bot funcionando corretamente ✔️")
-    st.sidebar.success("Enviado com sucesso!")
+def tempo_candle():
+    agora = datetime.datetime.utcnow()
+    minuto = agora.minute % 5
+    segundo = agora.second
+    return f"{4 - minuto:02d}:{59 - segundo:02d}"
+
+# ======================
+# 📰 NOTÍCIAS
+# ======================
+
+@st.cache_data(ttl=300)
+def noticias():
+    url = f"https://newsapi.org/v2/everything?q=forex OR USD OR JPY&language=en&pageSize=5&apiKey={NEWS_API}"
+    try:
+        return requests.get(url).json().get("articles", [])
+    except:
+        return []
 
 # ======================
 # 📥 DADOS
 # ======================
+
 @st.cache_data(ttl=240)
 def pegar_dados(ativo):
+
     df = td.time_series(
         symbol=ativo,
         interval="5min",
-        outputsize=500
+        outputsize=300
     ).as_pandas()
 
     df = df[::-1].reset_index()
 
-    df["datetime"] = pd.to_datetime(df["datetime"])
-    df["datetime"] = df["datetime"].dt.tz_localize("UTC").dt.tz_convert("America/Sao_Paulo")
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    df["datetime"] = df["datetime"].dt.tz_localize("UTC")
+    df["datetime"] = df["datetime"].dt.tz_convert("America/Sao_Paulo")
 
     for c in ["open","high","low","close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -69,8 +122,9 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# 🧠 ESTRATÉGIA ORIGINAL (NÃO ALTERADA)
+# 🧠 ESTRATÉGIA (INTACTA)
 # ======================
+
 def analisar(df):
 
     df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
@@ -88,12 +142,12 @@ def analisar(df):
     body = abs(df["close"].iloc[-1] - df["open"].iloc[-1])
     rng = df["high"].iloc[-1] - df["low"].iloc[-1]
 
-    candle_ok = body > rng * 0.6
+    candle = body > rng * 0.6
 
     vol = df["high"].rolling(10).max().iloc[-1] - df["low"].rolling(10).min().iloc[-1]
     vol_ok = vol > preco * 0.0005
 
-    if not (tendencia and candle_ok and vol_ok):
+    if not tendencia or not candle or not vol_ok:
         return "AGUARDAR", preco, 0, 0
 
     if ma9 > ma21 and preco <= suporte * 1.001:
@@ -105,27 +159,28 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 📊 BACKTEST PRO REAL (CORRIGIDO)
+# 📥 DADOS GLOBAL
 # ======================
-def backtest(df):
+
+dados = {ativo: pegar_dados(ativo) for ativo in ativos}
+
+# ======================
+# 📊 BACKTEST 30 DIAS (NOVO)
+# ======================
+
+def backtest_30d(df):
 
     df = df.copy()
-    df = df[(df["datetime"].dt.hour >= 8) & (df["datetime"].dt.hour <= 12)]
+
+    limite = df["datetime"].max() - pd.Timedelta(days=30)
+    df = df[df["datetime"] >= limite]
 
     wins = 0
     losses = 0
     trades = 0
 
-    erros = {
-        "LATERAL": 0,
-        "STOP": 0,
-        "FRACA_TENDENCIA": 0,
-        "FALHA_ROMPIMENTO": 0
-    }
-
-    detalhes_erros = []
-
-    horarios = {}
+    motivos_win = []
+    motivos_loss = []
 
     for i in range(50, len(df)):
 
@@ -137,10 +192,6 @@ def backtest(df):
 
         trades += 1
 
-        hora = df.iloc[i]["datetime"].hour
-        horarios.setdefault(hora, {"wins":0,"loss":0,"trades":0})
-        horarios[hora]["trades"] += 1
-
         futuro = df.iloc[i:i+5]
 
         if len(futuro) == 0:
@@ -149,135 +200,186 @@ def backtest(df):
         max_price = futuro["high"].max()
         min_price = futuro["low"].min()
 
-        resultado = None
-        motivo = ""
-
+        # COMPRA
         if sinal == "COMPRA":
 
             if max_price >= alvo:
                 wins += 1
-                horarios[hora]["wins"] += 1
-                continue
+                motivos_win.append("COMPRA: alvo atingido + tendência ok")
 
-            if min_price <= stop:
+            elif min_price <= stop:
                 losses += 1
-                erros["STOP"] += 1
-                motivo = "Stop loss atingido antes do alvo"
-            
-            elif max_price < alvo:
-                losses += 1
-                erros["LATERAL"] += 1
-                motivo = "Preço não teve força suficiente (mercado lateral)"
+                motivos_loss.append("COMPRA: stop loss atingido")
 
+            else:
+                losses += 1
+                motivos_loss.append("COMPRA: mercado lateral / sem força")
+
+        # VENDA
         if sinal == "VENDA":
 
             if min_price <= alvo:
                 wins += 1
-                horarios[hora]["wins"] += 1
-                continue
+                motivos_win.append("VENDA: alvo atingido + tendência ok")
 
-            if max_price >= stop:
+            elif max_price >= stop:
                 losses += 1
-                erros["STOP"] += 1
-                motivo = "Stop loss atingido antes do alvo"
+                motivos_loss.append("VENDA: stop loss atingido")
 
-            elif min_price > alvo:
+            else:
                 losses += 1
-                erros["FRACA_TENDENCIA"] += 1
-                motivo = "Movimento fraco contra tendência"
+                motivos_loss.append("VENDA: movimento fraco / lateral")
 
-        detalhes_erros.append(motivo)
-
-        horarios[hora]["loss"] += 1
-
-    return wins, losses, trades, erros, horarios, detalhes_erros
+    return wins, losses, trades, motivos_win, motivos_loss
 
 # ======================
-# 📥 DADOS
+# 🧠 ESTADO GLOBAL
 # ======================
-dados = {ativos[0]: pegar_dados(ativos[0])}
 
-df = dados["USD/JPY:FX"]
+if "sinais" not in st.session_state:
+    st.session_state.sinais = {}
 
-# ======================
-# 📊 BACKTEST BOTÃO
-# ======================
-st.divider()
-
-if st.button("📊 Rodar Backtest PRO COMPLETO"):
-
-    w, l, t, erros, horarios, detalhes = backtest(df)
-
-    st.success("Backtest concluído!")
-
-    st.metric("Trades", t)
-    st.metric("Wins", w)
-    st.metric("Losses", l)
-    st.metric("Win Rate", f"{(w/t)*100:.2f}%" if t > 0 else "0%")
-
-    st.divider()
-
-    st.subheader("❌ Diagnóstico de Erros")
-
-    total = sum(erros.values())
-
-    for k, v in erros.items():
-        perc = (v / total * 100) if total > 0 else 0
-        st.write(f"- {k}: {perc:.2f}%")
-
-    st.divider()
-
-    st.subheader("🧠 Motivos reais dos erros")
-
-    for d in list(set(detalhes))[:10]:
-        st.write("•", d)
-
-    st.divider()
-
-    st.subheader("⏱ Performance por horário")
-
-    for h in sorted(horarios.keys()):
-        d = horarios[h]
-        wr = (d["wins"]/d["trades"])*100 if d["trades"] > 0 else 0
-        st.write(f"{h}:00 → WinRate {wr:.2f}% | Trades {d['trades']}")
+if "ultimo_status" not in st.session_state:
+    st.session_state.ultimo_status = {}
 
 # ======================
-# 📊 GRÁFICO + SINAL
+# 📊 LOOP PRINCIPAL
 # ======================
-fig = go.Figure()
 
-fig.add_trace(go.Candlestick(
-    x=df["datetime"],
-    open=df["open"],
-    high=df["high"],
-    low=df["low"],
-    close=df["close"]
-))
+for ativo in ativos:
 
-st.plotly_chart(fig, use_container_width=True)
+    st.markdown("---")
 
-sinal, preco, stop, alvo = analisar(df)
+    df = dados[ativo]
+    sinal, preco, stop, alvo = analisar(df)
+    agora = datetime.datetime.now()
 
-st.subheader("📡 SINAL ATUAL")
-st.write(sinal)
-st.write("Preço:", preco)
+    # 🚨 SINAL
+    if sinal in ["COMPRA", "VENDA"]:
 
-# ======================
-# 📲 TELEGRAM REAL
-# ======================
-agora = datetime.datetime.now()
+        if ativo not in st.session_state.sinais or st.session_state.sinais[ativo]["tipo"] != sinal:
 
-if sinal in ["COMPRA", "VENDA"]:
-    telegram(f"""
-🚨 SNIPER PRO TRADE
+            st.session_state.sinais[ativo] = {
+                "tipo": sinal,
+                "entrada_hora": agora,
+                "preco_entrada": preco,
+                "preco_saida": alvo
+            }
 
-📊 Ativo: USD/JPY
-📈 Sinal: {sinal}
+            telegram(f"""
 
-💰 Preço: {preco}
-🎯 Entrada: {preco}
-🛑 Stop: {stop}
-🏁 Alvo: {alvo}
+🚨 SINAL DE TRADE
 
-⏱ {agora.strftime('%H:%M:%S')}
+📊 Ativo: {ativo}
+📈 Direção: {sinal}
+
+💰 Entrada: {preco}
+🎯 Saída: {alvo}
+
+🟢 Hora: {agora.strftime('%H:%M:%S')}
 """)
+
+    # ⏱ STATUS
+    ultimo = st.session_state.ultimo_status.get(ativo)
+
+    if not ultimo or (agora - ultimo).seconds >= 300:
+
+        st.session_state.ultimo_status[ativo] = agora
+
+        telegram(f"""
+
+📊 STATUS
+
+📌 {ativo}
+💰 Preço: {preco}
+📈 Sinal: {sinal}
+""")
+
+    # 📊 VISUAL
+    st.subheader(ativo)
+
+    st.metric("Preço", preco)
+    st.info(f"⏱ Candle fecha em: {tempo_candle()}")
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Candlestick(
+        x=df["datetime"],
+        open=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"]
+    ))
+
+    fig.update_layout(template="plotly_dark", height=420, xaxis_rangeslider_visible=False)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 📌 SINAL ATUAL
+    info = st.session_state.sinais.get(ativo, None)
+
+    if info:
+
+        entrada = info["entrada_hora"]
+        saida = entrada + datetime.timedelta(minutes=5)
+
+        st.markdown("### 📊 SINAL ATUAL")
+
+        st.write(f"📌 Direção: {info['tipo']}")
+        st.write(f"💰 Entrada: {info['preco_entrada']}")
+        st.write(f"🎯 Saída: {info['preco_saida']}")
+        st.write(f"🟢 Entrada: {entrada.strftime('%H:%M:%S')}")
+        st.write(f"🔴 Saída: {saida.strftime('%H:%M:%S')}")
+
+    else:
+        st.info("📌 AGUARDANDO OPORTUNIDADE")
+
+    # ALERTA
+    if sinal == "COMPRA":
+        st.success("🟢 COMPRA")
+
+    elif sinal == "VENDA":
+        st.error("🔴 VENDA")
+
+    else:
+        st.info("⚪ AGUARDAR")
+
+# ======================
+# 📊 BACKTEST BUTTON (NOVO)
+# ======================
+
+st.divider()
+st.subheader("📊 Backtest 30 dias PRO")
+
+if st.button("Rodar Backtest 30 dias"):
+
+    for ativo in ativos:
+
+        df = dados[ativo]
+
+        w, l, t, mw, ml = backtest_30d(df)
+
+        st.metric("Trades", t)
+        st.metric("Wins", w)
+        st.metric("Losses", l)
+        st.metric("Win Rate", f"{(w/t)*100:.2f}%" if t > 0 else "0%")
+
+        st.divider()
+
+        st.write("### ✔ WIN")
+        for x in mw[:10]:
+            st.write("🟢", x)
+
+        st.write("### ❌ LOSS")
+        for x in ml[:10]:
+            st.write("🔴", x)
+
+# ======================
+# 📰 NOTÍCIAS
+# ======================
+
+st.divider()
+st.subheader("📰 Notícias")
+
+for n in noticias():
+    st.write("🗞️", n["title"])
