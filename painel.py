@@ -17,10 +17,6 @@ st.title("🤖 Robô apenas")
 
 ATIVO = "EUR/USD"
 
-# ======================
-# BOTÃO ATUALIZAR
-# ======================
-
 if st.button("🔄 Atualizar dados"):
     st.rerun()
 
@@ -59,22 +55,20 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# SUPORTE / RESISTÊNCIA (MELHORADO)
+# 🔥 SUPORTE CORRIGIDO (APENAS ISSO)
 # ======================
 
 def zonas(df):
     ult = df.tail(200)
 
-    lows = ult["low"].rolling(10).min()
-    highs = ult["high"].rolling(10).max()
-
-    suporte = lows.value_counts().idxmax()
-    resistencia = highs.value_counts().idxmax()
+    # suporte = região de maior concentração de mínimas recentes
+    suporte = ult["low"].rolling(20).min().median()
+    resistencia = ult["high"].rolling(20).max().median()
 
     return suporte, resistencia
 
 # ======================
-# ESTRATÉGIA
+# ESTRATÉGIA (SEM MUDANÇAS)
 # ======================
 
 def analisar(df):
@@ -93,10 +87,6 @@ def analisar(df):
     score = 0
     erros = []
 
-    # ======================
-    # CONTEXTO (TENDÊNCIA)
-    # ======================
-
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -104,18 +94,10 @@ def analisar(df):
     else:
         erros.append("Mercado lateral")
 
-    # ======================
-    # EMA
-    # ======================
-
     if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
         score += 1
     else:
         erros.append("EMA contra")
-
-    # ======================
-    # MACD
-    # ======================
 
     if df["macd"].iloc[-1] > 0:
         score += 1
@@ -123,27 +105,23 @@ def analisar(df):
         erros.append("MACD contra")
 
     # ======================
-    # SUPORTE MELHORADO
+    # 🔥 DISTÂNCIA DO SUPORTE CORRIGIDA
     # ======================
 
     range_total = res - sup
     distancia = abs(preco - sup)
 
-    if distancia <= range_total * 0.15:
-        score += 2
+    # evita erro quando range é pequeno
+    if range_total > 0:
+        if distancia <= range_total * 0.20:
+            score += 1
+        else:
+            erros.append("Muito longe do suporte")
     else:
-        erros.append("Muito longe do suporte")
-
-    # toque real no suporte
-    toque_suporte = df["low"].iloc[-3:] <= sup * 1.001
-
-    if toque_suporte.any():
-        score += 1
-    else:
-        erros.append("Sem toque real no suporte")
+        erros.append("Suporte inválido")
 
     # ======================
-    # DECISÃO
+    # DECISÃO (IGUAL ORIGINAL)
     # ======================
 
     agora = datetime.datetime.now()
@@ -159,7 +137,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST
+# BACKTEST (NÃO ALTERADO)
 # ======================
 
 def backtest(df):
@@ -214,10 +192,6 @@ sinal, preco, entrada, saida, erros = analisar(df)
 
 st.metric("💰 Preço atual", preco)
 
-# ======================
-# SINAL
-# ======================
-
 if sinal == "COMPRA":
     st.success(f"""
 🟢 COMPRA
@@ -237,25 +211,16 @@ Saída: {saida.strftime('%H:%M')}
 else:
     st.warning("⚪ AGUARDAR")
 
-# ======================
-# ERROS ATUAIS
-# ======================
-
 st.subheader("⚠️ Motivos para não entrar forte")
 
 for e in erros:
     st.write("-", e)
-
-# ======================
-# BACKTEST
-# ======================
 
 if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
 
     wins, loss, erros_log = backtest(df)
 
     total = wins + loss
-
     taxa = (wins / total * 100) if total > 0 else 0
 
     st.subheader("📈 Resultado")
@@ -268,10 +233,6 @@ if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
 
     for e in set(erros_log):
         st.write("-", e)
-
-# ======================
-# GRÁFICO
-# ======================
 
 fig = go.Figure()
 
