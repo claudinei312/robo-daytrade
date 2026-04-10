@@ -8,16 +8,19 @@ from ta.momentum import RSIIndicator
 import datetime
 
 # ======================
-# CONFIG
+# CONFIG API (INSERIDA)
 # ======================
 
-API_KEY = "SUA_API_KEY"
+API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
 st.set_page_config(page_title="Robô Pro", layout="wide")
-st.title("🤖 Robô Pro Estruturado")
+st.title("🤖 Robô Pro - Versão Completa")
 
 ATIVO = "EUR/USD"
+
+if st.button("🔄 Atualizar dados"):
+    st.rerun()
 
 # ======================
 # DADOS
@@ -34,7 +37,7 @@ def pegar_dados():
     df = df[::-1].reset_index()
     df["datetime"] = pd.to_datetime(df["datetime"])
 
-    for c in ["open","high","low","close"]:
+    for c in ["open", "high", "low", "close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df.dropna()
@@ -62,39 +65,32 @@ def detectar_zonas(df, tol=0.0015):
     lows = df["low"].values
     highs = df["high"].values
 
-    zonas_sup = []
-    zonas_res = []
+    sup_zones = []
+    res_zones = []
 
     # suporte
     for i in range(len(lows)):
         base = lows[i]
-        count = np.sum(np.abs(lows - base) / base < tol)
+        touches = np.sum(np.abs(lows - base) / base < tol)
 
-        if count >= 2:
-            zonas_sup.append(base)
+        if touches >= 2:
+            sup_zones.append(base)
 
     # resistência
     for i in range(len(highs)):
         base = highs[i]
-        count = np.sum(np.abs(highs - base) / base < tol)
+        touches = np.sum(np.abs(highs - base) / base < tol)
 
-        if count >= 2:
-            zonas_res.append(base)
+        if touches >= 2:
+            res_zones.append(base)
 
-    if len(zonas_sup) > 0:
-        suporte = np.mean(zonas_sup)
-    else:
-        suporte = np.min(lows)
-
-    if len(zonas_res) > 0:
-        resistencia = np.mean(zonas_res)
-    else:
-        resistencia = np.max(highs)
+    suporte = np.mean(sup_zones) if sup_zones else np.min(lows)
+    resistencia = np.mean(res_zones) if res_zones else np.max(highs)
 
     return suporte, resistencia
 
 # ======================
-# ESTRATÉGIA PRINCIPAL
+# ESTRATÉGIA
 # ======================
 
 def analisar(df):
@@ -139,7 +135,7 @@ def analisar(df):
     else:
         erros.append("MACD contra")
 
-    # FILTRO ESTRUTURAL (SUP/RES)
+    # filtro estrutura
     range_total = res - sup
 
     if range_total > 0:
@@ -147,9 +143,9 @@ def analisar(df):
         dist_res = (res - preco) / range_total
 
         if dist_sup > 0.85:
-            erros.append("Preço esticado (perto da resistência)")
+            erros.append("Preço esticado (resistência próxima)")
         if dist_res > 0.85:
-            erros.append("Preço esticado (perto do suporte)")
+            erros.append("Preço esticado (suporte próximo)")
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
@@ -226,10 +222,6 @@ sinal, preco, entrada, saida, erros = analisar(df)
 
 st.metric("💰 Preço atual", round(preco, 5))
 
-# ======================
-# SINAL
-# ======================
-
 if sinal == "COMPRA":
     st.success(f"🟢 COMPRA\nEntrada: {entrada}\nSaída: {saida}")
 
@@ -239,12 +231,7 @@ elif sinal == "VENDA":
 else:
     st.warning("⚪ AGUARDAR")
 
-# ======================
-# ERROS
-# ======================
-
 st.subheader("⚠️ Motivos de bloqueio")
-
 for e in erros:
     st.write("•", e)
 
@@ -252,7 +239,7 @@ for e in erros:
 # BACKTEST
 # ======================
 
-if st.button("📊 Rodar Backtest 30 dias"):
+if st.button("📊 Rodar Backtest"):
 
     wins, loss, trades = backtest(df)
 
@@ -265,12 +252,6 @@ if st.button("📊 Rodar Backtest 30 dias"):
     st.write("❌ Loss:", loss)
     st.write(f"🎯 Assertividade: {taxa:.2f}%")
 
-    st.subheader("📌 Últimos trades")
-
-    for t in trades[:15]:
-        st.write("----")
-        st.write(t)
-        
 # ======================
 # GRÁFICO
 # ======================
