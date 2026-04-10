@@ -1,190 +1,127 @@
 import streamlit as st
 from twelvedata import TDClient
 import pandas as pd
+import requests
 from ta.trend import SMAIndicator
 from ta.momentum import RSIIndicator
-from ta.volatility import AverageTrueRange
 from datetime import datetime
-import time
-import requests
 
-# ===== CONFIG =====
-try:
-    API_KEY = st.secrets["API_KEY"]
-    NEWS_API = st.secrets["NEWS_API"]
-except:
-    API_KEY = "4b17399dcf214533abd7d72ea416f1df"
-    NEWS_API = "cbb654892f26479c98dcb781bea8f835"
-
-ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
+# ======================
+# 🔐 CONFIGURAÇÃO
+# ======================
+API_KEY = st.secrets["API_KEY"]
+NEWS_API = st.secrets["NEWS_API"]
 
 td = TDClient(apikey=API_KEY)
 
+ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
+
 st.set_page_config(layout="wide")
-st.title("📊 ROBÔ DAY TRADE - PAINEL PROFISSIONAL")
+st.title("📊 ROBÔ DAY TRADE FINAL (PRO)")
 
-rodando = st.toggle("🚀 Ativar Robô", value=True)
-
-if not rodando:
-    st.warning("Robô desligado")
-    st.stop()
-
-# ===== CACHE =====
+# ======================
+# 📥 DADOS DE MERCADO
+# ======================
 @st.cache_data(ttl=240)
 def pegar_dados(ativo):
     try:
-        ts = td.time_series(symbol=ativo, interval="5min", outputsize=100).as_pandas()
-        ts = ts[::-1].reset_index(drop=True)
+        df = td.time_series(
+            symbol=ativo,
+            interval="5min",
+            outputsize=300
+        ).as_pandas()
 
-        for col in ['open','high','low','close']:
-            ts[col] = pd.to_numeric(ts[col], errors='coerce')
+        df = df[::-1].reset_index(drop=True)
 
-        return ts.dropna()
+        for c in ["open", "high", "low", "close"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        return df.dropna()
+
     except Exception as e:
         st.error(f"Erro {ativo}: {e}")
         return None
 
-# ===== NOTÍCIAS =====
+# ======================
+# 📰 NOTÍCIAS
+# ======================
 @st.cache_data(ttl=300)
 def pegar_noticias():
     try:
         url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&sortBy=publishedAt&pageSize=5&apiKey={NEWS_API}"
-        resposta = requests.get(url).json()
-        return resposta["articles"]
+        return requests.get(url).json()["articles"]
     except:
         return []
 
-# ===== FILTRO NOTÍCIAS =====
-def evitar_noticias():
-    agora = datetime.now()
-    if (agora.hour == 9 and agora.minute >= 25) or (agora.hour == 10 and agora.minute <= 5):
-        return True
-    return False
+# ======================
+# 🧠 ESTRATÉGIA FINAL
+# ======================
+def analisar(df):
+    df["MA9"] = SMAIndicator(df["close"], 9).sma_indicator()
+    df["MA21"] = SMAIndicator(df["close"], 21).sma_indicator()
 
-# ===== ANÁLISE =====
-def analisar(data):
-    data['MA9'] = SMAIndicator(data['close'], 9).sma_indicator()
-    data['MA21'] = SMAIndicator(data['close'], 21).sma_indicator()
-    data['MA200'] = SMAIndicator(data['close'], 200).sma_indicator()
-    data['RSI'] = RSIIndicator(data['close'], 14).rsi()
-    data['ATR'] = AverageTrueRange(data['high'], data['low'], data['close'], 14).average_true_range()
+    preco = df["close"].iloc[-1]
+    ma9 = df["MA9"].iloc[-1]
+    ma21 = df["MA21"].iloc[-1]
 
-    preco = data['close'].iloc[-1]
-    ma9 = data['MA9'].iloc[-1]
-    ma21 = data['MA21'].iloc[-1]
-    ma200 = data['MA200'].iloc[-1]
-    rsi = data['RSI'].iloc[-1]
-    atr = data['ATR'].iloc[-1]
+    suporte = df["low"].rolling(20).min().iloc[-1]
+    resistencia = df["high"].rolling(20).max().iloc[-1]
 
-    suporte = data['low'].rolling(20).min().iloc[-1]
-    resistencia = data['high'].rolling(20).max().iloc[-1]
+    lateral = abs(ma9 - ma21) < 0.00015
 
-    candle = data.iloc[-1]
-    corpo = abs(candle['close'] - candle['open'])
-    pavio_inf = candle['open'] - candle['low']
-    pavio_sup = candle['high'] - candle['open']
-
-    rejeicao_compra = pavio_inf > corpo * 2
-    rejeicao_venda = pavio_sup > corpo * 2
-
-    lateral = abs(ma9 - ma21) < 0.0002
-
-    if evitar_noticias():
+    if lateral:
         return "AGUARDAR", preco, 0, 0
 
-    if atr < 0.0003 or atr > 0.003:
-        return "AGUARDAR", preco, 0, 0
-
-    # POTENCIAL
-    if preco > ma200 and ma9 > ma21 and rsi > 55 and not lateral:
-        return "COMPRA_POTENCIAL", preco, 0, 0
-
-    if preco < ma200 and ma9 < ma21 and rsi < 45 and not lateral:
-        return "VENDA_POTENCIAL", preco, 0, 0
-
-    # CONFIRMADO
-    if (
-        preco > ma200 and
-        ma9 > ma21 and
-        rsi > 55 and
-        preco <= suporte * 1.002 and
-        rejeicao_compra and
-        not lateral
-    ):
+    # 🔥 COMPRA
+    if ma9 > ma21 and preco <= suporte * 1.001:
         stop = suporte
         alvo = preco + (preco - stop) * 2
         return "COMPRA", preco, stop, alvo
 
-    if (
-        preco < ma200 and
-        ma9 < ma21 and
-        rsi < 45 and
-        preco >= resistencia * 0.998 and
-        rejeicao_venda and
-        not lateral
-    ):
+    # 🔥 VENDA
+    if ma9 < ma21 and preco >= resistencia * 0.999:
         stop = resistencia
         alvo = preco - (stop - preco) * 2
         return "VENDA", preco, stop, alvo
 
     return "AGUARDAR", preco, 0, 0
 
-# ===== PAINEL =====
-colunas = st.columns(3)
+# ======================
+# 📊 PAINEL
+# ======================
+col1, col2, col3 = st.columns(3)
 
 for i, ativo in enumerate(ativos):
-    with colunas[i]:
-        st.subheader(f"📈 {ativo}")
+    with [col1, col2, col3][i]:
+        st.subheader(ativo)
 
-        data = pegar_dados(ativo)
+        df = pegar_dados(ativo)
 
-        if data is not None:
-            sinal, preco, stop, alvo = analisar(data)
+        if df is not None:
+            sinal, preco, stop, alvo = analisar(df)
 
-            if "COMPRA" in sinal:
-                cor = "🟢"
-            elif "VENDA" in sinal:
-                cor = "🔴"
-            else:
-                cor = "⚪"
+            st.metric("Preço", f"{preco:.5f}")
 
-            st.metric("💰 Preço", f"{preco:.5f}")
+            if sinal == "COMPRA":
+                st.success("🟢 COMPRA CONFIRMADA")
+                st.write("Stop:", stop)
+                st.write("Alvo:", alvo)
 
-            if "POTENCIAL" in sinal:
-                st.warning(f"{cor} {sinal.replace('_',' ')} ⚠️")
-            elif sinal in ["COMPRA","VENDA"]:
-                st.success(f"{cor} {sinal} 🚨")
-                st.write(f"🛑 Stop: {stop:.5f}")
-                st.write(f"🎯 Alvo: {alvo:.5f}")
+            elif sinal == "VENDA":
+                st.error("🔴 VENDA CONFIRMADA")
+                st.write("Stop:", stop)
+                st.write("Alvo:", alvo)
+
             else:
                 st.info("⚪ AGUARDAR")
 
-# ===== NOTÍCIAS NO PAINEL =====
+# ======================
+# 📰 NOTÍCIAS
+# ======================
+st.divider()
 st.subheader("📰 Notícias Forex em tempo real")
 
-noticias = pegar_noticias()
+news = pegar_noticias()
 
-for n in noticias:
-    st.write(f"🗞️ {n['title']}")
-
-# ===== SINCRONIZAÇÃO M5 =====
-agora = datetime.now()
-minuto = agora.minute
-segundo = agora.second
-
-resto = minuto % 5
-tempo_restante = (5 - resto) * 60 - segundo
-
-st.write("🕒 Atualizado:", agora.strftime("%H:%M:%S"))
-st.write(f"⏳ Tempo para próxima vela: {tempo_restante}s")
-
-if tempo_restante > 60:
-    sleep_time = tempo_restante - 60
-    st.info(f"⏳ Próxima análise POTENCIAL em {sleep_time}s")
-    time.sleep(sleep_time)
-else:
-    sleep_time = tempo_restante
-    st.success(f"🚨 Aguardando CONFIRMAÇÃO em {sleep_time}s")
-    time.sleep(sleep_time)
-
-st.rerun()
+for n in news:
+    st.write("🗞️", n["title"])
