@@ -3,77 +3,43 @@ from twelvedata import TDClient
 import pandas as pd
 import requests
 from ta.trend import SMAIndicator
+import plotly.graph_objects as go
+import datetime
+from streamlit_autorefresh import st_autorefresh
 
 # ======================
-# 🎨 LAYOUT PROFISSIONAL (NOVO)
+# 🎨 LAYOUT PROFISSIONAL
 # ======================
 st.set_page_config(
     page_title="Sniper Pro Trading",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 st.markdown("""
 <style>
+body { background-color: #0b0f19; }
 
-/* 🌌 Fundo geral */
-body {
-    background-color: #0b0f19;
-}
-
-/* 🔥 Título principal */
 .main-title {
-    font-size: 36px;
+    font-size: 34px;
     font-weight: 800;
     text-align: center;
     color: #00ff99;
-    margin-bottom: 10px;
-    letter-spacing: 1px;
+    margin-bottom: 15px;
 }
 
-/* 📦 Cards */
 .card {
-    background: linear-gradient(145deg, #111827, #0f172a);
+    background: #111827;
+    padding: 12px;
+    border-radius: 12px;
     border: 1px solid #1f2937;
-    padding: 15px;
-    border-radius: 14px;
-    box-shadow: 0px 4px 15px rgba(0,0,0,0.4);
-    margin-bottom: 12px;
+    margin-bottom: 10px;
 }
 
-/* 🟢 BUY */
-.buy {
-    color: #00ff99;
-    font-weight: 700;
-    font-size: 16px;
-}
-
-/* 🔴 SELL */
-.sell {
-    color: #ff4d4d;
-    font-weight: 700;
-    font-size: 16px;
-}
-
-/* ⚪ WAIT */
-.wait {
-    color: #ffd166;
-    font-weight: 600;
-}
-
-/* 📊 MÉTRICAS */
 div[data-testid="stMetric"] {
     background-color: #0f172a;
-    border: 1px solid #1f2937;
-    padding: 10px;
     border-radius: 10px;
+    padding: 8px;
 }
-
-/* 🧠 TITULOS */
-h1, h2, h3 {
-    color: #e5e7eb;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -91,6 +57,11 @@ td = TDClient(apikey=API_KEY)
 
 ativos = ["EUR/USD:FX", "GBP/USD:FX", "USD/JPY:FX"]
 
+# ======================
+# 🔁 AUTO REFRESH
+# ======================
+st_autorefresh(interval=5000, key="refresh")
+
 rodando = st.toggle("🟢 Ativar Robô", value=True)
 
 if not rodando:
@@ -107,10 +78,26 @@ def telegram(msg):
         pass
 
 # ======================
+# ⏱️ TIMER CANDLE
+# ======================
+def tempo_candle():
+
+    agora = datetime.datetime.utcnow()
+
+    minuto = agora.minute % 5
+    segundo = agora.second
+
+    min_rest = 4 - minuto
+    seg_rest = 59 - segundo
+
+    return f"{min_rest:02d}:{seg_rest:02d}"
+
+# ======================
 # 📥 DADOS
 # ======================
 @st.cache_data(ttl=240)
 def pegar_dados(ativo):
+
     df = td.time_series(
         symbol=ativo,
         interval="5min",
@@ -130,7 +117,9 @@ def pegar_dados(ativo):
 # ======================
 @st.cache_data(ttl=300)
 def noticias():
+
     url = f"https://newsapi.org/v2/everything?q=forex OR USD OR EUR OR GBP&language=en&pageSize=5&apiKey={NEWS_API}"
+
     try:
         return requests.get(url).json()["articles"]
     except:
@@ -173,7 +162,7 @@ def analisar(df):
     return "AGUARDAR", preco, 0, 0
 
 # ======================
-# 🧠 SCORE DO MERCADO
+# 📊 SCORE MERCADO
 # ======================
 def score_mercado(dados):
 
@@ -196,7 +185,7 @@ def score_mercado(dados):
         return "🟢 BOM"
 
 # ======================
-# 📰 NÍVEL DE NOTÍCIA
+# 📰 RISCO NOTÍCIA
 # ======================
 def nivel_noticia():
 
@@ -236,18 +225,44 @@ def ranking_ativos(dados):
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 # ======================
+# 📊 GRÁFICO CANDLE
+# ======================
+def grafico(df, ativo):
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Candlestick(
+        x=df["datetime"],
+        open=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        increasing_line_color="green",
+        decreasing_line_color="red"
+    ))
+
+    fig.update_layout(
+        title=f"{ativo} - 5M Candle Live",
+        template="plotly_dark",
+        height=420,
+        xaxis_rangeslider_visible=False
+    )
+
+    return fig
+
+# ======================
 # 📥 DADOS
 # ======================
 dados = {ativo: pegar_dados(ativo) for ativo in ativos}
 
-# ======================
-# 🧠 INTELIGÊNCIA
-# ======================
 score = score_mercado(dados)
 news_level = nivel_noticia()
 ranking = ranking_ativos(dados)
 best = ranking[0][0]
 
+# ======================
+# 🧠 PAINEL GLOBAL
+# ======================
 st.subheader("🧠 INTELIGÊNCIA DO DIA")
 
 st.write("📊 Mercado:", score)
@@ -261,15 +276,15 @@ for ativo, sc in ranking:
 st.success(f"🔥 Melhor ativo do dia: {best}")
 
 # ======================
-# 🚨 RISCO
+# 🚨 BLOQUEIO RISCO
 # ======================
 if news_level == "🔴 ALTO RISCO":
-    st.error("⚠️ MERCADO EM ALTO RISCO (NOTÍCIAS)")
+    st.error("⚠️ MERCADO EM ALTO RISCO")
     telegram("⚠️ Mercado perigoso hoje - evitar operações")
     st.stop()
 
 # ======================
-# 📊 PAINEL
+# 📊 PAINEL ATIVOS
 # ======================
 col1, col2, col3 = st.columns(3)
 
@@ -277,16 +292,20 @@ for i, ativo in enumerate(ativos):
 
     with [col1, col2, col3][i]:
 
-        st.markdown(f"<div class='card'><b>{ativo}</b></div>", unsafe_allow_html=True)
-
         df = dados[ativo]
 
         sinal, preco, stop, alvo = analisar(df)
 
+        st.markdown(f"<div class='card'><b>{ativo}</b></div>", unsafe_allow_html=True)
+
         st.metric("Preço", preco)
 
+        st.info(f"⏱ Próximo candle: {tempo_candle()}")
+
+        st.plotly_chart(grafico(df, ativo), use_container_width=True)
+
         if ativo == best:
-            st.info("🔥 Melhor ativo hoje")
+            st.info("🔥 Melhor ativo do dia")
 
         if sinal == "COMPRA":
             st.success("🟢 COMPRA")
