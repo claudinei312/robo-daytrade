@@ -46,7 +46,7 @@ def pegar_dados():
     return df.dropna()
 
 # ======================
-# TENDÊNCIA (M21)
+# TENDÊNCIA (APENAS VISUAL)
 # ======================
 
 def tendencia(df):
@@ -59,7 +59,7 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# ESTRATÉGIA
+# ESTRATÉGIA (SÓ CRUZAMENTO)
 # ======================
 
 def analisar(df):
@@ -68,9 +68,8 @@ def analisar(df):
     df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
 
     preco = df["close"].iloc[-1]
-    trend = tendencia(df)
-
     erros = []
+
     i = len(df) - 1
 
     # ======================
@@ -87,54 +86,6 @@ def analisar(df):
         return corpo > media
 
     # ======================
-    # TOQUE NA M21
-    # ======================
-
-    def tocou_m21(i):
-        return df["low"].iloc[i] <= df["EMA21"].iloc[i] <= df["high"].iloc[i]
-
-    # ======================
-    # FILTRO LATERAL
-    # ======================
-
-    cruzamentos = 0
-    for j in range(i-10, i):
-        if (df["close"].iloc[j] > df["EMA21"].iloc[j] and df["close"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
-           (df["close"].iloc[j] < df["EMA21"].iloc[j] and df["close"].iloc[j-1] > df["EMA21"].iloc[j-1]):
-            cruzamentos += 1
-
-    if cruzamentos >= 3:
-        erros.append("Mercado lateral")
-        agora = datetime.datetime.now()
-        return "AGUARDAR", preco, agora, agora, erros
-
-    # ======================
-    # PULLBACK COM CONFIRMAÇÃO
-    # ======================
-
-    if i > 1:
-
-        # COMPRA
-        if trend == "ALTA" and tocou_m21(i-1):
-            if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
-                if df["high"].iloc[i] > df["high"].iloc[i-1]:
-                    entrada = df["datetime"].iloc[i]
-                    saida = entrada + datetime.timedelta(minutes=5)
-                    return "COMPRA", preco, entrada, saida, erros
-                else:
-                    erros.append("Sem rompimento compra")
-
-        # VENDA
-        if trend == "BAIXA" and tocou_m21(i-1):
-            if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
-                if df["low"].iloc[i] < df["low"].iloc[i-1]:
-                    entrada = df["datetime"].iloc[i]
-                    saida = entrada + datetime.timedelta(minutes=5)
-                    return "VENDA", preco, entrada, saida, erros
-                else:
-                    erros.append("Sem rompimento venda")
-
-    # ======================
     # CRUZAMENTO COM CONFIRMAÇÃO
     # ======================
 
@@ -142,25 +93,39 @@ def analisar(df):
 
         # COMPRA
         if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
+
             if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
+
                 if df["high"].iloc[i] > df["high"].iloc[i-1]:
+
                     entrada = df["datetime"].iloc[i]
                     saida = entrada + datetime.timedelta(minutes=5)
+
                     return "COMPRA", preco, entrada, saida, erros
                 else:
-                    erros.append("Cruzamento sem rompimento")
+                    erros.append("Sem rompimento compra")
+
+            else:
+                erros.append("Sem força no cruzamento compra")
 
         # VENDA
         if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
+
             if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
+
                 if df["low"].iloc[i] < df["low"].iloc[i-1]:
+
                     entrada = df["datetime"].iloc[i]
                     saida = entrada + datetime.timedelta(minutes=5)
+
                     return "VENDA", preco, entrada, saida, erros
                 else:
-                    erros.append("Cruzamento sem rompimento")
+                    erros.append("Sem rompimento venda")
 
-    erros.append("Sem entrada válida")
+            else:
+                erros.append("Sem força no cruzamento venda")
+
+    erros.append("Sem cruzamento válido")
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
@@ -169,7 +134,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST
+# BACKTEST (SÓ CRUZAMENTO)
 # ======================
 
 def backtest(df):
