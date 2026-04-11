@@ -9,34 +9,45 @@ from ta.volatility import AverageTrueRange
 # CONFIG
 # ======================
 
+st.set_page_config(page_title="Robô EMA PRO ESTÁVEL", layout="wide")
+st.title("🤖 EMA Cross + Filtro + Backtest ESTÁVEL")
+
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
-
-st.set_page_config(page_title="Robô Filtrado PRO", layout="wide")
-st.title("📊 EMA Cross + Filtro de Tendência + Força (PRO)")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
 # ======================
-# DADOS
+# DADOS (SEGURA)
 # ======================
 
 @st.cache_data(ttl=120)
 def pegar_dados(ativo):
 
-    df = td.time_series(
-        symbol=ativo,
-        interval="5min",
-        outputsize=1200
-    ).as_pandas()
+    try:
+        df = td.time_series(
+            symbol=ativo,
+            interval="5min",
+            outputsize=800
+        ).as_pandas()
 
-    df = df[::-1].reset_index()
-    df["datetime"] = pd.to_datetime(df["datetime"])
+        if df is None or df.empty:
+            st.error(f"❌ Sem dados para {ativo}")
+            return None
 
-    for c in ["open","high","low","close"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df[::-1].reset_index()
+        df["datetime"] = pd.to_datetime(df["datetime"])
 
-    return df.dropna()
+        for c in ["open", "high", "low", "close"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        df = df.dropna()
+
+        return df
+
+    except Exception as e:
+        st.error(f"❌ Erro API {ativo}: {e}")
+        return None
 
 # ======================
 # TENDÊNCIA
@@ -171,14 +182,20 @@ def backtest(df):
     return wins, loss, trades
 
 # ======================
-# EXECUÇÃO
+# EXECUÇÃO SEGURA
 # ======================
+
+st.subheader("🔄 Carregando dados...")
 
 resultados = []
 
 for ativo in ATIVOS:
 
     df = pegar_dados(ativo)
+
+    if df is None or len(df) < 100:
+        st.warning(f"{ativo} ignorado (dados insuficientes)")
+        continue
 
     w, l, trades = backtest(df)
 
@@ -194,10 +211,14 @@ for ativo in ATIVOS:
         "df": df
     })
 
+if len(resultados) == 0:
+    st.error("❌ Nenhum ativo carregado corretamente")
+    st.stop()
+
 melhor = max(resultados, key=lambda x: x["acc"])
 
 # ======================
-# UI - RANKING
+# RANKING
 # ======================
 
 st.subheader("📊 Ranking de Ativos")
@@ -213,7 +234,7 @@ for r in resultados:
 st.success(f"🔥 Melhor ativo: {melhor['ativo']}")
 
 # ======================
-# RESULTADO PRINCIPAL
+# RESULTADO FINAL
 # ======================
 
 w, l, trades = backtest(melhor["df"])
@@ -231,10 +252,10 @@ st.write("Assertividade:", round(acc,2))
 # TRADES
 # ======================
 
-st.subheader("📜 TRADES DETALHADOS")
+st.subheader("📜 TRADES")
 
 if len(trades) == 0:
-    st.warning("Nenhum trade encontrado com os filtros atuais.")
+    st.warning("Nenhum trade encontrado")
 else:
     for t in trades[-30:]:
         st.write(t)
