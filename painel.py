@@ -15,13 +15,14 @@ td = TDClient(apikey=API_KEY)
 st.set_page_config(page_title="Robô apenas", layout="wide")
 st.title("🤖 Robô apenas")
 
-ATIVO = "EUR/USD"
+ATIVO = "USD/JPY"
 
 # ======================
 # BOTÃO ATUALIZAR
 # ======================
 
 if st.button("🔄 Atualizar dados"):
+    st.cache_data.clear()
     st.rerun()
 
 # ======================
@@ -45,7 +46,7 @@ def pegar_dados():
     return df.dropna()
 
 # ======================
-# TENDÊNCIA (AGORA M21)
+# TENDÊNCIA (M21)
 # ======================
 
 def tendencia(df):
@@ -58,7 +59,7 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# ESTRATÉGIA NOVA
+# ESTRATÉGIA
 # ======================
 
 def analisar(df):
@@ -71,8 +72,10 @@ def analisar(df):
 
     erros = []
 
+    i = len(df) - 1
+
     # ======================
-    # FUNÇÃO VELA FORTE
+    # VELA FORTE
     # ======================
 
     def vela_forte(i):
@@ -86,17 +89,31 @@ def analisar(df):
         return corpo > media
 
     # ======================
-    # FUNÇÃO TOQUE NA M21
+    # TOQUE NA M21
     # ======================
 
     def tocou_m21(i):
         return df["low"].iloc[i] <= df["EMA21"].iloc[i] <= df["high"].iloc[i]
 
     # ======================
-    # PULLBACK
+    # FILTRO LATERAL (IMPORTANTE)
     # ======================
 
-    i = len(df) - 1
+    cruzamentos = 0
+
+    for j in range(i-10, i):
+        if (df["close"].iloc[j] > df["EMA21"].iloc[j] and df["close"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
+           (df["close"].iloc[j] < df["EMA21"].iloc[j] and df["close"].iloc[j-1] > df["EMA21"].iloc[j-1]):
+            cruzamentos += 1
+
+    if cruzamentos >= 3:
+        erros.append("Mercado lateral")
+        agora = datetime.datetime.now()
+        return "AGUARDAR", preco, agora, agora, erros
+
+    # ======================
+    # PULLBACK
+    # ======================
 
     if trend == "ALTA":
         if tocou_m21(i):
@@ -105,7 +122,7 @@ def analisar(df):
                 saida = entrada + datetime.timedelta(minutes=5)
                 return "COMPRA", preco, entrada, saida, erros
             else:
-                erros.append("Sem vela forte compra")
+                erros.append("Sem força na compra")
 
     if trend == "BAIXA":
         if tocou_m21(i):
@@ -114,7 +131,7 @@ def analisar(df):
                 saida = entrada + datetime.timedelta(minutes=5)
                 return "VENDA", preco, entrada, saida, erros
             else:
-                erros.append("Sem vela forte venda")
+                erros.append("Sem força na venda")
 
     # ======================
     # CRUZAMENTO EMA5 x M21
@@ -144,135 +161,4 @@ def analisar(df):
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
-    saida = entrada + datetime.timedelta(minutes=5)
-
-    return "AGUARDAR", preco, entrada, saida, erros
-
-# ======================
-# BACKTEST (NÃO ALTERADO)
-# ======================
-
-def backtest(df):
-
-    wins = 0
-    loss = 0
-    erros_log = []
-
-    for i in range(200, len(df)-1):
-
-        hora = df["datetime"].iloc[i].hour
-
-        if hora < 8 or hora > 12:
-            continue
-
-        sub = df.iloc[:i]
-
-        sinal, _, _, _, erros = analisar(sub)
-
-        if sinal == "AGUARDAR":
-            continue
-
-        entrada = df["close"].iloc[i]
-        saida = df["close"].iloc[i+1]
-
-        if sinal == "COMPRA":
-            if saida > entrada:
-                wins += 1
-            else:
-                loss += 1
-                erros_log.extend(erros)
-
-        if sinal == "VENDA":
-            if saida < entrada:
-                wins += 1
-            else:
-                loss += 1
-                erros_log.extend(erros)
-
-    return wins, loss, erros_log
-
-# ======================
-# EXECUÇÃO
-# ======================
-
-df = pegar_dados()
-
-trend = tendencia(df)
-st.write("📊 Tendência:", trend)
-
-sinal, preco, entrada, saida, erros = analisar(df)
-
-st.metric("💰 Preço atual", preco)
-
-# ======================
-# SINAL
-# ======================
-
-if sinal == "COMPRA":
-    st.success(f"""
-🟢 COMPRA
-
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
-
-elif sinal == "VENDA":
-    st.error(f"""
-🔴 VENDA
-
-Entrada: {entrada.strftime('%H:%M')}
-Saída: {saida.strftime('%H:%M')}
-""")
-
-else:
-    st.warning("⚪ AGUARDAR")
-
-# ======================
-# ERROS ATUAIS
-# ======================
-
-st.subheader("⚠️ Motivos para não entrar forte")
-
-for e in erros:
-    st.write("-", e)
-
-# ======================
-# BOTÃO BACKTEST
-# ======================
-
-if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
-
-    wins, loss, erros_log = backtest(df)
-
-    total = wins + loss
-
-    taxa = (wins / total * 100) if total > 0 else 0
-
-    st.subheader("📈 Resultado")
-
-    st.write("✅ Wins:", wins)
-    st.write("❌ Loss:", loss)
-    st.write(f"🎯 Assertividade: {taxa:.2f}%")
-
-    st.subheader("⚠️ Principais erros")
-
-    for e in set(erros_log):
-        st.write("-", e)
-
-# ======================
-# GRÁFICO
-# ======================
-
-fig = go.Figure()
-
-fig.add_trace(go.Candlestick(
-    x=df["datetime"],
-    open=df["open"],
-    high=df["high"],
-    low=df["low"],
-    close=df["close"]
-))
-
-fig.update_layout(template="plotly_dark", height=500)
-
-st.plotly_chart(fig, use_container_width=True)
+    saida = entrada +
