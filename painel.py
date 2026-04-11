@@ -11,8 +11,8 @@ from ta.trend import EMAIndicator
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Scanner Diagnóstico PRO", layout="wide")
-st.title("📊 EMA Scanner PRO + Diagnóstico de Loss")
+st.set_page_config(page_title="Backtest Real SL/TP", layout="wide")
+st.title("📊 EMA Cross + Stop Loss / Take Profit REAL")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
@@ -38,105 +38,116 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# VELA FORTE
+# EMA CROSS
 # ======================
 
 def vela_forte(df, i):
     corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
-    range_total = df["high"].iloc[i] - df["low"].iloc[i]
-    if range_total == 0:
+    rng = df["high"].iloc[i] - df["low"].iloc[i]
+    if rng == 0:
         return False
-    return (corpo / range_total) >= 0.5
+    return (corpo / rng) >= 0.5
 
 # ======================
-# SCANNER COM DIAGNÓSTICO
+# BACKTEST REAL SL/TP
 # ======================
 
-def scanner(df):
+def backtest_real(df):
 
     df["EMA5"] = EMAIndicator(df["close"], 5).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
 
     wins = 0
     loss = 0
-
     trades = []
-    erros_lista = []
 
-    for i in range(50, len(df) - 3):
+    SL_PCT = 0.0008   # 0.08%
+    TP_PCT = 0.0012   # 0.12%
+    MAX_BARS = 6      # 30 minutos
 
-        # ======================
-        # COMPRA
-        # ======================
+    for i in range(50, len(df) - MAX_BARS):
 
         cruz_compra = (
             df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and
             df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]
         )
 
-        if cruz_compra:
-
-            if not vela_forte(df, i-1):
-                erros_lista.append("COMPRA: sem força")
-                continue
-
-            entrada = df["close"].iloc[i]
-            saida = df["close"].iloc[i+2]
-
-            trade = {
-                "tipo": "COMPRA",
-                "entrada": entrada,
-                "saida": saida
-            }
-
-            if saida > entrada:
-                wins += 1
-                trade["resultado"] = "WIN"
-            else:
-                loss += 1
-                trade["resultado"] = "LOSS"
-                erros_lista.append("COMPRA: movimento insuficiente")
-
-            trades.append(trade)
-
-        # ======================
-        # VENDA
-        # ======================
-
         cruz_venda = (
             df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and
             df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]
         )
 
-        if cruz_venda:
+        if not (cruz_compra or cruz_venda):
+            continue
 
-            if not vela_forte(df, i-1):
-                erros_lista.append("VENDA: sem força")
-                continue
+        entry_price = df["close"].iloc[i]
 
-            entrada = df["close"].iloc[i]
-            saida = df["close"].iloc[i+2]
+        if cruz_compra:
+            direction = "BUY"
+            sl = entry_price * (1 - SL_PCT)
+            tp = entry_price * (1 + TP_PCT)
 
-            trade = {
-                "tipo": "VENDA",
-                "entrada": entrada,
-                "saida": saida
-            }
+        else:
+            direction = "SELL"
+            sl = entry_price * (1 + SL_PCT)
+            tp = entry_price * (1 - TP_PCT)
 
-            if saida < entrada:
-                wins += 1
-                trade["resultado"] = "WIN"
-            else:
-                loss += 1
-                trade["resultado"] = "LOSS"
-                erros_lista.append("VENDA: movimento insuficiente")
+        result = None
+        exit_price = None
 
-            trades.append(trade)
+        # ======================
+        # MONITORAMENTO REAL
+        # ======================
 
-    return wins, loss, trades, erros_lista
+        for j in range(i+1, i+MAX_BARS):
+
+            high = df["high"].iloc[j]
+            low = df["low"].iloc[j]
+
+            if direction == "BUY":
+
+                if low <= sl:
+                    result = "LOSS"
+                    exit_price = sl
+                    break
+
+                if high >= tp:
+                    result = "WIN"
+                    exit_price = tp
+                    break
+
+            if direction == "SELL":
+
+                if high >= sl:
+                    result = "LOSS"
+                    exit_price = sl
+                    break
+
+                if low <= tp:
+                    result = "WIN"
+                    exit_price = tp
+                    break
+
+        if result is None:
+            continue
+
+        if result == "WIN":
+            wins += 1
+        else:
+            loss += 1
+
+        trades.append({
+            "tipo": direction,
+            "entrada": entry_price,
+            "saida": exit_price,
+            "resultado": result,
+            "data": df["datetime"].iloc[i]
+        })
+
+    return wins, loss, trades
 
 # ======================
-# ANALISE POR ATIVO
+# EXECUÇÃO POR ATIVO
 # ======================
 
 resultados = []
@@ -144,7 +155,8 @@ resultados = []
 for ativo in ATIVOS:
 
     df = pegar_dados(ativo)
-    w, l, trades, erros = scanner(df)
+
+    w, l, trades = backtest_real(df)
 
     total = w + l
     acc = (w / total * 100) if total > 0 else 0
@@ -154,9 +166,8 @@ for ativo in ATIVOS:
         "wins": w,
         "loss": l,
         "acc": acc,
-        "erros": erros,
-        "df": df,
-        "trades": trades
+        "trades": trades,
+        "df": df
     })
 
 melhor = max(resultados, key=lambda x: x["acc"])
@@ -165,44 +176,35 @@ melhor = max(resultados, key=lambda x: x["acc"])
 # PAINEL
 # ======================
 
-st.subheader("📊 Ranking de Ativos")
+st.subheader("📊 Ranking de Ativos (REAL SL/TP)")
 
 for r in resultados:
-
     st.write(f"""
 ### {r['ativo']}
 Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
-
-Erros principais:
-{list(set(r['erros']))}
 """)
 
 st.success(f"🔥 Melhor ativo: {melhor['ativo']}")
 
 # ======================
-# RESULTADO ATUAL
+# RESULTADO
 # ======================
 
-w, l, trades, erros = scanner(melhor["df"])
+w, l, trades = backtest_real(melhor["df"])
 
-total = w + l
-acc = (w / total * 100) if total > 0 else 0
+acc = (w / (w + l) * 100) if (w + l) > 0 else 0
 
-st.subheader("📈 RESULTADO ATUAL")
+st.subheader("📈 RESULTADO FINAL")
 
 st.write("Wins:", w)
 st.write("Loss:", l)
 st.write("Assertividade:", round(acc,2))
 
-st.subheader("⚠️ PRINCIPAIS ERROS (GERAL)")
-
-st.write(list(set(erros)))
-
 # ======================
-# LOG DE TRADES
+# TRADES
 # ======================
 
-st.subheader("📜 ÚLTIMOS TRADES")
+st.subheader("📜 TRADES REAIS")
 
 for t in trades[-20:]:
     st.write(t)
