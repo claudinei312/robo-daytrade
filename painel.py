@@ -60,14 +60,21 @@ def backtest(df, ativo):
 
         hora = df["datetime"].iloc[i].hour
 
-        # 📌 filtro horário (ontem 08-17)
+        # 📌 filtro horário (08-17)
         if not (8 <= hora <= 17):
             continue
 
         prev = i - 1
 
-        cross_up = df["EMA5"].iloc[prev] < df["EMA21"].iloc[prev] and df["EMA5"].iloc[i] > df["EMA21"].iloc[i]
-        cross_down = df["EMA5"].iloc[prev] > df["EMA21"].iloc[prev] and df["EMA5"].iloc[i] < df["EMA21"].iloc[i]
+        cross_up = (
+            df["EMA5"].iloc[prev] < df["EMA21"].iloc[prev] and
+            df["EMA5"].iloc[i] > df["EMA21"].iloc[i]
+        )
+
+        cross_down = (
+            df["EMA5"].iloc[prev] > df["EMA21"].iloc[prev] and
+            df["EMA5"].iloc[i] < df["EMA21"].iloc[i]
+        )
 
         if not cross_up and not cross_down:
             continue
@@ -189,10 +196,12 @@ Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
         st.write(t)
 
 # ======================
-# GRÁFICO
+# GRÁFICO (CORRIGIDO M1)
 # ======================
 
-df = pegar_dados("USD/JPY")
+ativo_grafico = st.selectbox("📊 Escolha o ativo do gráfico", ATIVOS)
+
+df = pegar_dados(ativo_grafico)
 
 fig = go.Figure()
 
