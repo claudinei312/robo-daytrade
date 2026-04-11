@@ -12,8 +12,8 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Hedge Bot EMA Pro FINAL", layout="wide")
-st.title("💎 Robô Profissional EMA Cross FINAL")
+st.set_page_config(page_title="Robô Pro V2", layout="wide")
+st.title("💎 Robô Profissional V2 - Pullback System")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
@@ -50,14 +50,7 @@ def vela_forte(df, i):
     return (corpo / range_total) > 0.6
 
 # ======================
-# VOLATILIDADE (ATR SIMPLIFICADO)
-# ======================
-
-def volatilidade(df, i):
-    return (df["high"].iloc[i] - df["low"].iloc[i])
-
-# ======================
-# BACKTEST FINAL
+# BACKTEST PROFISSIONAL
 # ======================
 
 def backtest(df, ativo):
@@ -70,45 +63,39 @@ def backtest(df, ativo):
     loss = 0
     trades = []
 
-    erros = {
-        "baixa_tendencia": 0,
-        "sem_forca": 0,
-        "lateral": 0,
-        "volatilidade_baixa": 0
-    }
+    SL_BASE = 0.0004
+    TP_BASE = 0.0006
 
     for i in range(250, len(df) - 20):
 
         hora = df["datetime"].iloc[i].hour
-
         if not (8 <= hora <= 17):
             continue
 
         price = df["close"].iloc[i]
 
         # ======================
-        # TENDÊNCIA
+        # TENDÊNCIA GLOBAL
         # ======================
 
-        trend_up = price > df["EMA200"].iloc[i]
-        trend_down = price < df["EMA200"].iloc[i]
+        trend_up = df["EMA21"].iloc[i] > df["EMA200"].iloc[i]
+        trend_down = df["EMA21"].iloc[i] < df["EMA200"].iloc[i]
 
         # ======================
-        # LATERALIDADE
+        # DETECTAR LATERALIDADE
         # ======================
 
-        cruz = 0
+        cruzamentos = 0
         for j in range(i-10, i):
             if (df["EMA5"].iloc[j] > df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
                (df["EMA5"].iloc[j] < df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1]):
-                cruz += 1
+                cruzamentos += 1
 
-        if cruz >= 5:
-            erros["lateral"] += 1
+        if cruzamentos >= 5:
             continue
 
         # ======================
-        # CRUZAMENTO
+        # CRUZAMENTO BASE
         # ======================
 
         cross_up = df["EMA5"].iloc[i-3] < df["EMA21"].iloc[i-3] and df["EMA5"].iloc[i] > df["EMA21"].iloc[i]
@@ -120,27 +107,16 @@ def backtest(df, ativo):
         direction = None
 
         # ======================
-        # FILTROS DE QUALIDADE
+        # PULLBACK LOGIC
         # ======================
 
-        vol = volatilidade(df, i)
-
-        SL = max(vol * 0.8, 0.0003)
-        TP = SL * 1.5
+        pullback = abs(df["close"].iloc[i-1] - df["EMA21"].iloc[i-1]) < abs(df["EMA21"].iloc[i] * 0.0003)
 
         # ======================
         # COMPRA
         # ======================
 
-        if cross_up:
-
-            if not trend_up:
-                erros["baixa_tendencia"] += 1
-                continue
-
-            if not vela_forte(df, i):
-                erros["sem_forca"] += 1
-                continue
+        if cross_up and trend_up and pullback and vela_forte(df, i):
 
             direction = "COMPRA"
 
@@ -148,15 +124,7 @@ def backtest(df, ativo):
         # VENDA
         # ======================
 
-        if cross_down:
-
-            if not trend_down:
-                erros["baixa_tendencia"] += 1
-                continue
-
-            if not vela_forte(df, i):
-                erros["sem_forca"] += 1
-                continue
+        if cross_down and trend_down and pullback and vela_forte(df, i):
 
             direction = "VENDA"
 
@@ -164,34 +132,35 @@ def backtest(df, ativo):
             continue
 
         entry = price
+
         result = None
 
         # ======================
         # EXECUÇÃO REAL
         # ======================
 
-        for j in range(i+1, i+20):
+        for j in range(i+1, i+25):
 
             high = df["high"].iloc[j]
             low = df["low"].iloc[j]
 
             if direction == "COMPRA":
 
-                if low <= entry - SL:
+                if low <= entry - SL_BASE:
                     result = "LOSS"
                     break
 
-                if high >= entry + TP:
+                if high >= entry + TP_BASE:
                     result = "WIN"
                     break
 
             if direction == "VENDA":
 
-                if high >= entry + SL:
+                if high >= entry + SL_BASE:
                     result = "LOSS"
                     break
 
-                if low <= entry - TP:
+                if low <= entry - TP_BASE:
                     result = "WIN"
                     break
 
@@ -211,13 +180,13 @@ def backtest(df, ativo):
             "hora": df["datetime"].iloc[i]
         })
 
-    return wins, loss, trades, erros
+    return wins, loss, trades
 
 # ======================
 # EXECUÇÃO
 # ======================
 
-if st.button("🚀 RODAR ROBÔ FINAL PRO"):
+if st.button("🚀 Rodar Robô V2 Pro"):
 
     resultados = []
 
@@ -225,7 +194,7 @@ if st.button("🚀 RODAR ROBÔ FINAL PRO"):
 
         df = pegar_dados(ativo)
 
-        w, l, trades, erros = backtest(df, ativo)
+        w, l, trades = backtest(df, ativo)
 
         total = w + l
         acc = (w / total * 100) if total > 0 else 0
@@ -235,8 +204,7 @@ if st.button("🚀 RODAR ROBÔ FINAL PRO"):
             "wins": w,
             "loss": l,
             "acc": acc,
-            "trades": trades,
-            "erros": erros
+            "trades": trades
         })
 
     melhor = max(resultados, key=lambda x: x["acc"])
@@ -256,10 +224,6 @@ Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
     st.write("Wins:", melhor["wins"])
     st.write("Loss:", melhor["loss"])
     st.write("Assertividade:", round(melhor["acc"], 2))
-
-    st.subheader("📉 Motivos de rejeição")
-
-    st.json(melhor["erros"])
 
     st.subheader("📜 Trades")
 
