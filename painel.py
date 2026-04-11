@@ -13,7 +13,7 @@ API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
 st.set_page_config(page_title="Robô Filtrado PRO", layout="wide")
-st.title("📊 EMA Cross + Filtro de Força + Tendência")
+st.title("📊 EMA Cross + Filtro de Tendência + Força (PRO)")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
@@ -27,7 +27,7 @@ def pegar_dados(ativo):
     df = td.time_series(
         symbol=ativo,
         interval="5min",
-        outputsize=1500
+        outputsize=1200
     ).as_pandas()
 
     df = df[::-1].reset_index()
@@ -53,7 +53,7 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# FORÇA DE MERCADO (ATR)
+# FORÇA (ATR)
 # ======================
 
 def mercado_forte(df):
@@ -65,8 +65,7 @@ def mercado_forte(df):
         window=14
     ).average_true_range()
 
-    # força mínima baseada no preço
-    return atr.iloc[-1] > (df["close"].iloc[-1] * 0.0005)
+    return atr.iloc[-1] > (df["close"].iloc[-1] * 0.0004)
 
 # ======================
 # BACKTEST
@@ -81,23 +80,14 @@ def backtest(df):
     loss = 0
     trades = []
 
-    for i in range(60, len(df) - 3):
-
-        # ======================
-        # FILTRO DE MERCADO
-        # ======================
+    for i in range(60, len(df) - 6):
 
         if not mercado_forte(df):
             continue
 
         trend = tendencia(df)
-
         if trend == "LATERAL":
             continue
-
-        # ======================
-        # CRUZAMENTO
-        # ======================
 
         cruz_compra = (
             df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and
@@ -110,8 +100,9 @@ def backtest(df):
         )
 
         entry = df["close"].iloc[i]
-        sl = 0.0008
-        tp = 0.0012
+
+        SL = 0.0008
+        TP = 0.0012
 
         # ======================
         # COMPRA
@@ -123,23 +114,25 @@ def backtest(df):
 
             for j in range(i+1, i+6):
 
-                if df["low"].iloc[j] <= entry * (1 - sl):
+                if df["low"].iloc[j] <= entry * (1 - SL):
                     result = "LOSS"
                     break
 
-                if df["high"].iloc[j] >= entry * (1 + tp):
+                if df["high"].iloc[j] >= entry * (1 + TP):
                     result = "WIN"
                     break
 
+            if result is None:
+                continue
+
             if result == "WIN":
                 wins += 1
-            elif result == "LOSS":
-                loss += 1
             else:
-                continue
+                loss += 1
 
             trades.append({
                 "tipo": "COMPRA",
+                "entrada": entry,
                 "resultado": result
             })
 
@@ -153,23 +146,25 @@ def backtest(df):
 
             for j in range(i+1, i+6):
 
-                if df["high"].iloc[j] >= entry * (1 + sl):
+                if df["high"].iloc[j] >= entry * (1 + SL):
                     result = "LOSS"
                     break
 
-                if df["low"].iloc[j] <= entry * (1 - tp):
+                if df["low"].iloc[j] <= entry * (1 - TP):
                     result = "WIN"
                     break
 
+            if result is None:
+                continue
+
             if result == "WIN":
                 wins += 1
-            elif result == "LOSS":
-                loss += 1
             else:
-                continue
+                loss += 1
 
             trades.append({
                 "tipo": "VENDA",
+                "entrada": entry,
                 "resultado": result
             })
 
@@ -202,22 +197,29 @@ for ativo in ATIVOS:
 melhor = max(resultados, key=lambda x: x["acc"])
 
 # ======================
-# PAINEL
+# UI - RANKING
 # ======================
 
-st.subheader("📊 Ranking de Ativos (FILTRADO)")
+st.subheader("📊 Ranking de Ativos")
 
 for r in resultados:
     st.write(f"""
 ### {r['ativo']}
-Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
+✔ Wins: {r['wins']}
+❌ Loss: {r['loss']}
+📈 Assertividade: {round(r['acc'],2)}%
 """)
 
 st.success(f"🔥 Melhor ativo: {melhor['ativo']}")
 
+# ======================
+# RESULTADO PRINCIPAL
+# ======================
+
 w, l, trades = backtest(melhor["df"])
 
-acc = (w / (w + l) * 100) if (w + l) > 0 else 0
+total = w + l
+acc = (w / total * 100) if total > 0 else 0
 
 st.subheader("📈 RESULTADO FINAL")
 
@@ -225,10 +227,17 @@ st.write("Wins:", w)
 st.write("Loss:", l)
 st.write("Assertividade:", round(acc,2))
 
-st.subheader("📜 TRADES")
+# ======================
+# TRADES
+# ======================
 
-for t in trades[-20:]:
-    st.write(t)
+st.subheader("📜 TRADES DETALHADOS")
+
+if len(trades) == 0:
+    st.warning("Nenhum trade encontrado com os filtros atuais.")
+else:
+    for t in trades[-30:]:
+        st.write(t)
 
 # ======================
 # GRÁFICO
