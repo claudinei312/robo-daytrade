@@ -46,7 +46,7 @@ def pegar_dados():
     return df.dropna()
 
 # ======================
-# TENDÊNCIA VISUAL
+# TENDÊNCIA
 # ======================
 
 def tendencia(df):
@@ -59,7 +59,7 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# ESTRATÉGIA
+# SETUP + JANELA
 # ======================
 
 def analisar(df):
@@ -73,7 +73,7 @@ def analisar(df):
     i = len(df) - 1
 
     # ======================
-    # VELA FORTE (AJUSTADA)
+    # VELA FORTE
     # ======================
 
     def vela_forte(i):
@@ -86,80 +86,81 @@ def analisar(df):
         return (corpo / range_total) > 0.5
 
     # ======================
-    # FILTRO DE LATERAL
+    # DETECTAR CRUZAMENTO
     # ======================
 
-    cruzamentos = 0
+    cruzou_compra = False
+    cruzou_venda = False
+    barra_cruzamento = None
+
     for j in range(i-10, i):
-        if (df["EMA5"].iloc[j] > df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
-           (df["EMA5"].iloc[j] < df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1]):
-            cruzamentos += 1
+        if df["EMA5"].iloc[j-1] < df["EMA21"].iloc[j-1] and df["EMA5"].iloc[j] > df["EMA21"].iloc[j]:
+            cruzou_compra = True
+            barra_cruzamento = j
 
-    if cruzamentos >= 3:
-        erros.append("Mercado lateral")
-        agora = datetime.datetime.now()
-        return "AGUARDAR", preco, agora, agora, erros
+        if df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1] and df["EMA5"].iloc[j] < df["EMA21"].iloc[j]:
+            cruzou_venda = True
+            barra_cruzamento = j
 
     # ======================
-    # CRUZAMENTO AJUSTADO
+    # JANELA DE SETUP (3 velas)
     # ======================
 
-    if i > 3:
+    janela_valida = False
+    if barra_cruzamento is not None:
+        janela_valida = (i - barra_cruzamento) <= 3
 
-        dist_antes = abs(df["EMA5"].iloc[i-2] - df["EMA21"].iloc[i-2])
+    # ======================
+    # COMPRA
+    # ======================
 
-        # COMPRA
-        if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
+    if cruzou_compra and janela_valida:
 
-            if dist_antes < 0.0001:
-                erros.append("Cruzamento muito próximo")
-            else:
+        if df["EMA21"].iloc[i] > df["EMA21"].iloc[i-1]:
 
-                if df["EMA21"].iloc[i] <= df["EMA21"].iloc[i-1]:
-                    erros.append("M21 sem inclinação alta")
+            if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
+
+                if df["high"].iloc[i] > df["high"].iloc[i-1]:
+
+                    entrada = df["datetime"].iloc[i]
+                    saida = entrada + datetime.timedelta(minutes=5)
+
+                    return "COMPRA", preco, entrada, saida, erros
                 else:
+                    erros.append("Sem continuidade compra")
 
-                    if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
-
-                        # 🔥 AGORA: só precisa romper (mais entradas)
-                        if df["high"].iloc[i] > df["high"].iloc[i-1]:
-
-                            entrada = df["datetime"].iloc[i]
-                            saida = entrada + datetime.timedelta(minutes=5)
-
-                            return "COMPRA", preco, entrada, saida, erros
-                        else:
-                            erros.append("Sem rompimento compra")
-
-                    else:
-                        erros.append("Sem força compra")
-
-        # VENDA
-        if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
-
-            if dist_antes < 0.0001:
-                erros.append("Cruzamento muito próximo")
             else:
+                erros.append("Sem força compra")
 
-                if df["EMA21"].iloc[i] >= df["EMA21"].iloc[i-1]:
-                    erros.append("M21 sem inclinação baixa")
+        else:
+            erros.append("M21 sem tendência alta")
+
+    # ======================
+    # VENDA
+    # ======================
+
+    if cruzou_venda and janela_valida:
+
+        if df["EMA21"].iloc[i] < df["EMA21"].iloc[i-1]:
+
+            if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
+
+                if df["low"].iloc[i] < df["low"].iloc[i-1]:
+
+                    entrada = df["datetime"].iloc[i]
+                    saida = entrada + datetime.timedelta(minutes=5)
+
+                    return "VENDA", preco, entrada, saida, erros
                 else:
+                    erros.append("Sem continuidade venda")
 
-                    if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
+            else:
+                erros.append("Sem força venda")
 
-                        if df["low"].iloc[i] < df["low"].iloc[i-1]:
+        else:
+            erros.append("M21 sem tendência baixa")
 
-                            entrada = df["datetime"].iloc[i]
-                            saida = entrada + datetime.timedelta(minutes=5)
-
-                            return "VENDA", preco, entrada, saida, erros
-                        else:
-                            erros.append("Sem rompimento venda")
-
-                    else:
-                        erros.append("Sem força venda")
-
-    erros.append("Sem cruzamento válido")
+    erros.append("Sem setup válido")
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
