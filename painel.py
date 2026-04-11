@@ -12,8 +12,8 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô Multi-Ativo Forex", layout="wide")
-st.title("🤖 Robô Forex + Seletor + Backtest PRO")
+st.set_page_config(page_title="Robô Forex PRO", layout="wide")
+st.title("🤖 Robô Forex PRO")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
@@ -81,7 +81,7 @@ def score_ativo(df):
     return score
 
 # ======================
-# ESTRATÉGIA BASE (SUA LÓGICA ORIGINAL)
+# ESTRATÉGIA (SUA BASE)
 # ======================
 
 def analisar(df):
@@ -99,10 +99,7 @@ def analisar(df):
             return False
         return (corpo / range_total) > 0.6
 
-    # ======================
-    # CRUZAMENTO COMPRA
-    # ======================
-
+    # COMPRA
     if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
 
         if df["EMA21"].iloc[i] > df["EMA21"].iloc[i-1]:
@@ -110,18 +107,13 @@ def analisar(df):
             if vela_forte(i-1):
 
                 if df["high"].iloc[i] > df["high"].iloc[i-1]:
-
                     return "COMPRA", erros
-
                 else:
                     erros.append("Sem rompimento compra")
             else:
                 erros.append("Sem força compra")
 
-    # ======================
-    # CRUZAMENTO VENDA
-    # ======================
-
+    # VENDA
     if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
 
         if df["EMA21"].iloc[i] < df["EMA21"].iloc[i-1]:
@@ -129,9 +121,7 @@ def analisar(df):
             if vela_forte(i-1):
 
                 if df["low"].iloc[i] < df["low"].iloc[i-1]:
-
                     return "VENDA", erros
-
                 else:
                     erros.append("Sem rompimento venda")
             else:
@@ -141,7 +131,7 @@ def analisar(df):
     return "AGUARDAR", erros
 
 # ======================
-# BACKTEST PROFISSIONAL
+# BACKTEST
 # ======================
 
 def backtest(df):
@@ -153,8 +143,7 @@ def backtest(df):
     bloqueios = {
         "sem_setup": 0,
         "forca": 0,
-        "rompimento": 0,
-        "lateral": 0
+        "rompimento": 0
     }
 
     for i in range(60, len(df)-2):
@@ -169,14 +158,7 @@ def backtest(df):
         sinal, erros = analisar(sub)
 
         if sinal == "AGUARDAR":
-
-            if "Sem setup" in erros:
-                bloqueios["sem_setup"] += 1
-            if "Sem força" in str(erros):
-                bloqueios["forca"] += 1
-            if "Sem rompimento" in str(erros):
-                bloqueios["rompimento"] += 1
-
+            bloqueios["sem_setup"] += 1
             continue
 
         entrada = df["close"].iloc[i+1]
@@ -218,21 +200,22 @@ scores = []
 
 for ativo in ATIVOS:
 
-    df = pegar_dados(ativo)
-    score = score_ativo(df)
+    df_temp = pegar_dados(ativo)
+    score = score_ativo(df_temp)
 
     scores.append({
         "ativo": ativo,
         "score": score,
-        "df": df
+        "df": df_temp
     })
 
 melhor = max(scores, key=lambda x: x["score"])
 
+ATIVO_ESCOLHIDO = melhor["ativo"]
 df = melhor["df"]
 
 # ======================
-# EXECUÇÃO
+# PAINEL
 # ======================
 
 st.subheader("📊 Ranking de Ativos")
@@ -240,13 +223,17 @@ st.subheader("📊 Ranking de Ativos")
 for s in sorted(scores, key=lambda x: x["score"], reverse=True):
     st.write(f"{s['ativo']} → Score: {s['score']}")
 
-st.success(f"🔥 Ativo escolhido: {melhor['ativo']}")
+st.success(f"🔥 ATIVO ESCOLHIDO: {ATIVO_ESCOLHIDO}")
 
 sinal, erros = analisar(df)
 
 st.subheader("Sinal Atual")
 st.write(sinal)
 st.write(erros)
+
+# ======================
+# BACKTEST
+# ======================
 
 if st.button("📊 Rodar Backtest Completo"):
 
