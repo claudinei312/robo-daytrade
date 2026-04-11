@@ -12,8 +12,8 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô Cruzamento PURO", layout="wide")
-st.title("🤖 EMA Cross PURO + Backtest PRO")
+st.set_page_config(page_title="Robô EMA Sequencial PRO", layout="wide")
+st.title("🤖 EMA Cross Sequencial PRO (Cruzamento + Confirmação)")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
@@ -39,7 +39,18 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# ESTRATÉGIA PURO CRUZAMENTO
+# VELA FORTE
+# ======================
+
+def vela_forte(df, i):
+    corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
+    range_total = df["high"].iloc[i] - df["low"].iloc[i]
+    if range_total == 0:
+        return False
+    return (corpo / range_total) >= 0.5
+
+# ======================
+# ESTRATÉGIA SEQUENCIAL
 # ======================
 
 def analisar(df):
@@ -50,40 +61,47 @@ def analisar(df):
     i = len(df) - 1
     erros = []
 
-    def vela_forte(i):
-        corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
-        range_total = df["high"].iloc[i] - df["low"].iloc[i]
-        if range_total == 0:
-            return False
-        return (corpo / range_total) > 0.5  # equilibrado
-
     # ======================
     # COMPRA
     # ======================
 
-    if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
+    cruzamento_compra = (
+        df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and
+        df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]
+    )
 
-        if vela_forte(i-1):
-            if df["close"].iloc[i] > df["open"].iloc[i]:
+    if cruzamento_compra:
+
+        if vela_forte(df, i-1):
+
+            if df["close"].iloc[i] > df["close"].iloc[i-1]:
                 return "COMPRA", erros
             else:
-                erros.append("Sem continuidade compra")
+                erros.append("Sem confirmação candle seguinte")
+
         else:
-            erros.append("Sem força compra")
+            erros.append("Sem vela de força")
 
     # ======================
     # VENDA
     # ======================
 
-    if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
+    cruzamento_venda = (
+        df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and
+        df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]
+    )
 
-        if vela_forte(i-1):
-            if df["close"].iloc[i] < df["open"].iloc[i]:
+    if cruzamento_venda:
+
+        if vela_forte(df, i-1):
+
+            if df["close"].iloc[i] < df["close"].iloc[i-1]:
                 return "VENDA", erros
             else:
-                erros.append("Sem continuidade venda")
+                erros.append("Sem confirmação candle seguinte")
+
         else:
-            erros.append("Sem força venda")
+            erros.append("Sem vela de força")
 
     erros.append("Sem setup")
     return "AGUARDAR", erros
@@ -98,16 +116,15 @@ def backtest(df):
     loss = 0
     log = []
 
-    erros_stats = {
+    stats = {
         "sem_setup": 0,
         "forca": 0,
-        "continuidade": 0
+        "confirmacao": 0
     }
 
     for i in range(60, len(df)-2):
 
         hora = df["datetime"].iloc[i].hour
-
         if hora < 8 or hora > 17:
             continue
 
@@ -116,11 +133,13 @@ def backtest(df):
         sinal, erros = analisar(sub)
 
         if sinal == "AGUARDAR":
+            stats["sem_setup"] += 1
 
-            erros_stats["sem_setup"] += 1
+            if "Sem vela de força" in erros:
+                stats["forca"] += 1
 
-            if "Sem força" in str(erros):
-                erros_stats["forca"] += 1
+            if "Sem confirmação" in str(erros):
+                stats["confirmacao"] += 1
 
             continue
 
@@ -132,7 +151,7 @@ def backtest(df):
             "tipo": sinal,
             "entrada": entrada,
             "saida": saida,
-            "erros": erros
+            "resultado": ""
         }
 
         if sinal == "COMPRA":
@@ -143,7 +162,7 @@ def backtest(df):
                 loss += 1
                 trade["resultado"] = "LOSS"
 
-        elif sinal == "VENDA":
+        if sinal == "VENDA":
             if saida < entrada:
                 wins += 1
                 trade["resultado"] = "WIN"
@@ -153,14 +172,14 @@ def backtest(df):
 
         log.append(trade)
 
-    return wins, loss, log, erros_stats
+    return wins, loss, log, stats
 
 # ======================
-# SELETOR DE ATIVOS
+# SELETOR DE ATIVOS SIMPLES
 # ======================
 
 def score(df):
-    return (df["close"].iloc[-1] - df["close"].iloc[-10])
+    return df["close"].iloc[-1] - df["close"].iloc[-5]
 
 scores = []
 
@@ -182,7 +201,7 @@ df = melhor["df"]
 st.subheader("📊 Ranking de Ativos")
 
 for s in scores:
-    st.write(f"{s['ativo']} → Score: {round(s['score'],5)}")
+    st.write(f"{s['ativo']} → Score: {s['score']}")
 
 st.success(f"🔥 ATIVO ESCOLHIDO: {melhor['ativo']}")
 
@@ -198,7 +217,7 @@ st.write(erros)
 
 if st.button("📊 Rodar Backtest PRO"):
 
-    wins, loss, log, erros_stats = backtest(df)
+    wins, loss, log, stats = backtest(df)
 
     total = wins + loss
     taxa = (wins / total * 100) if total > 0 else 0
@@ -209,11 +228,11 @@ if st.button("📊 Rodar Backtest PRO"):
     st.write("Loss:", loss)
     st.write("Assertividade:", round(taxa, 2))
 
-    st.subheader("ERROS")
+    st.subheader("ESTATÍSTICAS DE ERRO")
 
-    st.write(erros_stats)
+    st.write(stats)
 
-    st.subheader("LOG DETALHADO")
+    st.subheader("LOG COMPLETO")
 
     for t in log:
         st.write(t)
