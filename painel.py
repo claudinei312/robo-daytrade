@@ -3,6 +3,7 @@ from twelvedata import TDClient
 import pandas as pd
 import plotly.graph_objects as go
 from ta.trend import EMAIndicator
+from ta.volatility import AverageTrueRange
 
 # ======================
 # CONFIG
@@ -11,8 +12,8 @@ from ta.trend import EMAIndicator
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Backtest Real SL/TP", layout="wide")
-st.title("📊 EMA Cross + Stop Loss / Take Profit REAL")
+st.set_page_config(page_title="Robô Filtrado PRO", layout="wide")
+st.title("📊 EMA Cross + Filtro de Força + Tendência")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
@@ -38,21 +39,40 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# EMA CROSS
+# TENDÊNCIA
 # ======================
 
-def vela_forte(df, i):
-    corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
-    rng = df["high"].iloc[i] - df["low"].iloc[i]
-    if rng == 0:
-        return False
-    return (corpo / rng) >= 0.5
+def tendencia(df):
+
+    ema21 = EMAIndicator(df["close"], 21).ema_indicator()
+
+    if df["close"].iloc[-1] > ema21.iloc[-1]:
+        return "ALTA"
+    elif df["close"].iloc[-1] < ema21.iloc[-1]:
+        return "BAIXA"
+    return "LATERAL"
 
 # ======================
-# BACKTEST REAL SL/TP
+# FORÇA DE MERCADO (ATR)
 # ======================
 
-def backtest_real(df):
+def mercado_forte(df):
+
+    atr = AverageTrueRange(
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        window=14
+    ).average_true_range()
+
+    # força mínima baseada no preço
+    return atr.iloc[-1] > (df["close"].iloc[-1] * 0.0005)
+
+# ======================
+# BACKTEST
+# ======================
+
+def backtest(df):
 
     df["EMA5"] = EMAIndicator(df["close"], 5).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
@@ -61,11 +81,23 @@ def backtest_real(df):
     loss = 0
     trades = []
 
-    SL_PCT = 0.0008   # 0.08%
-    TP_PCT = 0.0012   # 0.12%
-    MAX_BARS = 6      # 30 minutos
+    for i in range(60, len(df) - 3):
 
-    for i in range(50, len(df) - MAX_BARS):
+        # ======================
+        # FILTRO DE MERCADO
+        # ======================
+
+        if not mercado_forte(df):
+            continue
+
+        trend = tendencia(df)
+
+        if trend == "LATERAL":
+            continue
+
+        # ======================
+        # CRUZAMENTO
+        # ======================
 
         cruz_compra = (
             df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and
@@ -77,77 +109,74 @@ def backtest_real(df):
             df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]
         )
 
-        if not (cruz_compra or cruz_venda):
-            continue
+        entry = df["close"].iloc[i]
+        sl = 0.0008
+        tp = 0.0012
 
-        entry_price = df["close"].iloc[i]
+        # ======================
+        # COMPRA
+        # ======================
 
         if cruz_compra:
-            direction = "BUY"
-            sl = entry_price * (1 - SL_PCT)
-            tp = entry_price * (1 + TP_PCT)
 
-        else:
-            direction = "SELL"
-            sl = entry_price * (1 + SL_PCT)
-            tp = entry_price * (1 - TP_PCT)
+            result = None
 
-        result = None
-        exit_price = None
+            for j in range(i+1, i+6):
+
+                if df["low"].iloc[j] <= entry * (1 - sl):
+                    result = "LOSS"
+                    break
+
+                if df["high"].iloc[j] >= entry * (1 + tp):
+                    result = "WIN"
+                    break
+
+            if result == "WIN":
+                wins += 1
+            elif result == "LOSS":
+                loss += 1
+            else:
+                continue
+
+            trades.append({
+                "tipo": "COMPRA",
+                "resultado": result
+            })
 
         # ======================
-        # MONITORAMENTO REAL
+        # VENDA
         # ======================
 
-        for j in range(i+1, i+MAX_BARS):
+        if cruz_venda:
 
-            high = df["high"].iloc[j]
-            low = df["low"].iloc[j]
+            result = None
 
-            if direction == "BUY":
+            for j in range(i+1, i+6):
 
-                if low <= sl:
+                if df["high"].iloc[j] >= entry * (1 + sl):
                     result = "LOSS"
-                    exit_price = sl
                     break
 
-                if high >= tp:
+                if df["low"].iloc[j] <= entry * (1 - tp):
                     result = "WIN"
-                    exit_price = tp
                     break
 
-            if direction == "SELL":
+            if result == "WIN":
+                wins += 1
+            elif result == "LOSS":
+                loss += 1
+            else:
+                continue
 
-                if high >= sl:
-                    result = "LOSS"
-                    exit_price = sl
-                    break
-
-                if low <= tp:
-                    result = "WIN"
-                    exit_price = tp
-                    break
-
-        if result is None:
-            continue
-
-        if result == "WIN":
-            wins += 1
-        else:
-            loss += 1
-
-        trades.append({
-            "tipo": direction,
-            "entrada": entry_price,
-            "saida": exit_price,
-            "resultado": result,
-            "data": df["datetime"].iloc[i]
-        })
+            trades.append({
+                "tipo": "VENDA",
+                "resultado": result
+            })
 
     return wins, loss, trades
 
 # ======================
-# EXECUÇÃO POR ATIVO
+# EXECUÇÃO
 # ======================
 
 resultados = []
@@ -156,7 +185,7 @@ for ativo in ATIVOS:
 
     df = pegar_dados(ativo)
 
-    w, l, trades = backtest_real(df)
+    w, l, trades = backtest(df)
 
     total = w + l
     acc = (w / total * 100) if total > 0 else 0
@@ -176,7 +205,7 @@ melhor = max(resultados, key=lambda x: x["acc"])
 # PAINEL
 # ======================
 
-st.subheader("📊 Ranking de Ativos (REAL SL/TP)")
+st.subheader("📊 Ranking de Ativos (FILTRADO)")
 
 for r in resultados:
     st.write(f"""
@@ -186,11 +215,7 @@ Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
 
 st.success(f"🔥 Melhor ativo: {melhor['ativo']}")
 
-# ======================
-# RESULTADO
-# ======================
-
-w, l, trades = backtest_real(melhor["df"])
+w, l, trades = backtest(melhor["df"])
 
 acc = (w / (w + l) * 100) if (w + l) > 0 else 0
 
@@ -200,11 +225,7 @@ st.write("Wins:", w)
 st.write("Loss:", l)
 st.write("Assertividade:", round(acc,2))
 
-# ======================
-# TRADES
-# ======================
-
-st.subheader("📜 TRADES REAIS")
+st.subheader("📜 TRADES")
 
 for t in trades[-20:]:
     st.write(t)
