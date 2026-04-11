@@ -12,21 +12,22 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="EMA Cross Scanner", layout="wide")
-st.title("📊 EMA Cross M5 Scanner + Backtest")
+st.set_page_config(page_title="Robô M1 Scanner", layout="wide")
+st.title("📊 Robô EMA Cross M1 + Backtest")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
 # ======================
-# DADOS
+# DADOS M1
 # ======================
 
 @st.cache_data(ttl=120)
 def pegar_dados(ativo):
+
     df = td.time_series(
         symbol=ativo,
-        interval="5min",
-        outputsize=2000
+        interval="1min",   # 🔥 M1
+        outputsize=5000
     ).as_pandas()
 
     df = df[::-1].reset_index()
@@ -38,10 +39,10 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# BACKTEST REAL
+# BACKTEST M1
 # ======================
 
-def backtest(df):
+def backtest(df, ativo):
 
     df["EMA5"] = EMAIndicator(df["close"], 5).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
@@ -50,23 +51,17 @@ def backtest(df):
     loss = 0
 
     trades = []
-    erros = {
-        "cruzamentos": 0,
-        "wins_compra": 0,
-        "wins_venda": 0,
-        "loss_compra": 0,
-        "loss_venda": 0
-    }
 
-    SL = 0.0008
-    TP = 0.0012
+    # 🔥 M1 precisa SL menor
+    SL = 0.0003
+    TP = 0.0005
 
     for i in range(50, len(df) - 10):
 
         hora = df["datetime"].iloc[i].hour
 
-        # janela operacional (Brasil + Londres)
-        if not (8 <= hora <= 11 or 13 <= hora <= 15):
+        # 📌 filtro horário (ontem 08-17)
+        if not (8 <= hora <= 17):
             continue
 
         prev = i - 1
@@ -77,47 +72,40 @@ def backtest(df):
         if not cross_up and not cross_down:
             continue
 
-        entry = df["close"].iloc[i+1]
-        direction = None
-
-        if cross_up:
-            direction = "COMPRA"
-        elif cross_down:
-            direction = "VENDA"
+        entry = df["close"].iloc[i]
+        direction = "COMPRA" if cross_up else "VENDA"
 
         result = None
 
         # ======================
-        # SIMULAÇÃO REAL
+        # SIMULAÇÃO REAL M1
         # ======================
 
-        for j in range(i+2, i+12):
+        for j in range(i+1, i+20):
 
             high = df["high"].iloc[j]
             low = df["low"].iloc[j]
 
+            # COMPRA
             if direction == "COMPRA":
 
                 if low <= entry * (1 - SL):
                     result = "LOSS"
-                    erros["loss_compra"] += 1
                     break
 
                 if high >= entry * (1 + TP):
                     result = "WIN"
-                    erros["wins_compra"] += 1
                     break
 
+            # VENDA
             if direction == "VENDA":
 
                 if high >= entry * (1 + SL):
                     result = "LOSS"
-                    erros["loss_venda"] += 1
                     break
 
                 if low <= entry * (1 - TP):
                     result = "WIN"
-                    erros["wins_venda"] += 1
                     break
 
         if result is None:
@@ -129,20 +117,20 @@ def backtest(df):
             loss += 1
 
         trades.append({
-            "ativo": "ATIVO",
+            "ativo": ativo,
             "tipo": direction,
             "entrada": entry,
             "resultado": result,
             "hora": df["datetime"].iloc[i]
         })
 
-    return wins, loss, trades, erros
+    return wins, loss, trades
 
 # ======================
 # EXECUÇÃO
 # ======================
 
-if st.button("📊 Rodar Backtest Completo"):
+if st.button("📊 Rodar Backtest M1 (Ontem 08-17)"):
 
     resultados = []
 
@@ -150,7 +138,7 @@ if st.button("📊 Rodar Backtest Completo"):
 
         df = pegar_dados(ativo)
 
-        w, l, trades, erros = backtest(df)
+        w, l, trades = backtest(df, ativo)
 
         total = w + l
         acc = (w / total * 100) if total > 0 else 0
@@ -160,9 +148,7 @@ if st.button("📊 Rodar Backtest Completo"):
             "wins": w,
             "loss": l,
             "acc": acc,
-            "trades": trades,
-            "erros": erros,
-            "df": df
+            "trades": trades
         })
 
     melhor = max(resultados, key=lambda x: x["acc"])
@@ -185,7 +171,7 @@ Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
     # RESULTADO FINAL
     # ======================
 
-    w, l, trades, erros = backtest(melhor["df"])
+    w, l, trades = backtest(pegar_dados(melhor["ativo"]), melhor["ativo"])
 
     st.subheader("📈 RESULTADO FINAL")
 
@@ -194,17 +180,13 @@ Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
     st.write("Assertividade:", round((w/(w+l))*100 if (w+l)>0 else 0,2))
 
     # ======================
-    # DETALHES
+    # TRADES
     # ======================
 
     st.subheader("📜 TRADES DETALHADOS")
 
     for t in trades[-30:]:
         st.write(t)
-
-    st.subheader("⚠️ ESTATÍSTICAS DE ERRO")
-
-    st.write(erros)
 
 # ======================
 # GRÁFICO
