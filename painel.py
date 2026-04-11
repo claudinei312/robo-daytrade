@@ -46,7 +46,7 @@ def pegar_dados():
     return df.dropna()
 
 # ======================
-# TENDÊNCIA (APENAS VISUAL)
+# TENDÊNCIA VISUAL
 # ======================
 
 def tendencia(df):
@@ -59,7 +59,7 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# ESTRATÉGIA (SÓ CRUZAMENTO)
+# ESTRATÉGIA PROFISSIONAL
 # ======================
 
 def analisar(df):
@@ -73,57 +73,94 @@ def analisar(df):
     i = len(df) - 1
 
     # ======================
-    # VELA FORTE
+    # VELA FORTE REAL
     # ======================
 
     def vela_forte(i):
         corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
-        media = (
-            abs(df["close"].iloc[i-1] - df["open"].iloc[i-1]) +
-            abs(df["close"].iloc[i-2] - df["open"].iloc[i-2]) +
-            abs(df["close"].iloc[i-3] - df["open"].iloc[i-3])
-        ) / 3
-        return corpo > media
+        range_total = df["high"].iloc[i] - df["low"].iloc[i]
+
+        if range_total == 0:
+            return False
+
+        return (corpo / range_total) > 0.6  # corpo dominante
 
     # ======================
-    # CRUZAMENTO COM CONFIRMAÇÃO
+    # FILTRO DE LATERAL
     # ======================
 
-    if i > 2:
+    cruzamentos = 0
+    for j in range(i-10, i):
+        if (df["EMA5"].iloc[j] > df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
+           (df["EMA5"].iloc[j] < df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1]):
+            cruzamentos += 1
+
+    if cruzamentos >= 3:
+        erros.append("Mercado lateral")
+        agora = datetime.datetime.now()
+        return "AGUARDAR", preco, agora, agora, erros
+
+    # ======================
+    # CRUZAMENTO PROFISSIONAL
+    # ======================
+
+    if i > 3:
+
+        dist_antes = abs(df["EMA5"].iloc[i-2] - df["EMA21"].iloc[i-2])
 
         # COMPRA
         if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
 
-            if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
-
-                if df["high"].iloc[i] > df["high"].iloc[i-1]:
-
-                    entrada = df["datetime"].iloc[i]
-                    saida = entrada + datetime.timedelta(minutes=5)
-
-                    return "COMPRA", preco, entrada, saida, erros
-                else:
-                    erros.append("Sem rompimento compra")
-
+            # afastamento antes (evita lateral)
+            if dist_antes < 0.0002:
+                erros.append("Cruzamento muito próximo")
             else:
-                erros.append("Sem força no cruzamento compra")
+
+                # M21 inclinada pra cima
+                if df["EMA21"].iloc[i] <= df["EMA21"].iloc[i-1]:
+                    erros.append("M21 sem inclinação alta")
+                else:
+
+                    # vela forte
+                    if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
+
+                        # rompimento + continuidade
+                        if df["high"].iloc[i] > df["high"].iloc[i-1] and df["close"].iloc[i] > df["open"].iloc[i]:
+
+                            entrada = df["datetime"].iloc[i]
+                            saida = entrada + datetime.timedelta(minutes=5)
+
+                            return "COMPRA", preco, entrada, saida, erros
+                        else:
+                            erros.append("Sem continuidade compra")
+
+                    else:
+                        erros.append("Sem força compra")
 
         # VENDA
         if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
 
-            if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
-
-                if df["low"].iloc[i] < df["low"].iloc[i-1]:
-
-                    entrada = df["datetime"].iloc[i]
-                    saida = entrada + datetime.timedelta(minutes=5)
-
-                    return "VENDA", preco, entrada, saida, erros
-                else:
-                    erros.append("Sem rompimento venda")
-
+            if dist_antes < 0.0002:
+                erros.append("Cruzamento muito próximo")
             else:
-                erros.append("Sem força no cruzamento venda")
+
+                if df["EMA21"].iloc[i] >= df["EMA21"].iloc[i-1]:
+                    erros.append("M21 sem inclinação baixa")
+                else:
+
+                    if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
+
+                        if df["low"].iloc[i] < df["low"].iloc[i-1] and df["close"].iloc[i] < df["open"].iloc[i]:
+
+                            entrada = df["datetime"].iloc[i]
+                            saida = entrada + datetime.timedelta(minutes=5)
+
+                            return "VENDA", preco, entrada, saida, erros
+                        else:
+                            erros.append("Sem continuidade venda")
+
+                    else:
+                        erros.append("Sem força venda")
 
     erros.append("Sem cruzamento válido")
 
@@ -134,7 +171,7 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST (SÓ CRUZAMENTO)
+# BACKTEST
 # ======================
 
 def backtest(df):
