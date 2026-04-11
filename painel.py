@@ -2,7 +2,8 @@ import streamlit as st
 from twelvedata import TDClient
 import pandas as pd
 import plotly.graph_objects as go
-from ta.trend import EMAIndicator
+from ta.trend import EMAIndicator, MACD
+from ta.momentum import RSIIndicator
 import datetime
 
 # ======================
@@ -12,21 +13,27 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô Pro V2", layout="wide")
-st.title("💎 Robô Profissional V2 - Pullback System")
+st.set_page_config(page_title="Robô apenas", layout="wide")
+st.title("🤖 Robô apenas")
 
-ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
+ATIVO = "EUR/USD"
+
+# ======================
+# BOTÃO ATUALIZAR
+# ======================
+
+if st.button("🔄 Atualizar dados"):
+    st.rerun()
 
 # ======================
 # DADOS
 # ======================
 
 @st.cache_data(ttl=120)
-def pegar_dados(ativo):
-
+def pegar_dados():
     df = td.time_series(
-        symbol=ativo,
-        interval="1min",
+        symbol=ATIVO,
+        interval="5min",
         outputsize=5000
     ).as_pandas()
 
@@ -39,204 +46,211 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# VELA FORTE
+# TENDÊNCIA
 # ======================
 
-def vela_forte(df, i):
-    corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
-    range_total = df["high"].iloc[i] - df["low"].iloc[i]
-    if range_total == 0:
-        return False
-    return (corpo / range_total) > 0.6
+def tendencia(df):
+    df["EMA50"] = EMAIndicator(df["close"],50).ema_indicator()
+    df["EMA200"] = EMAIndicator(df["close"],200).ema_indicator()
+
+    if df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1]:
+        return "ALTA"
+    elif df["EMA50"].iloc[-1] < df["EMA200"].iloc[-1]:
+        return "BAIXA"
+    return "LATERAL"
 
 # ======================
-# BACKTEST PROFISSIONAL
+# SUPORTE / RESISTÊNCIA
 # ======================
 
-def backtest(df, ativo):
+def zonas(df):
+    ult = df.tail(144)  # últimas 12h (M5)
 
-    df["EMA5"] = EMAIndicator(df["close"], 5).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
-    df["EMA200"] = EMAIndicator(df["close"], 200).ema_indicator()
+    suporte = ult["low"].min()
+    resistencia = ult["high"].max()
+
+    return suporte, resistencia
+
+# ======================
+# ESTRATÉGIA
+# ======================
+
+def analisar(df):
+
+    df["EMA9"] = EMAIndicator(df["close"],9).ema_indicator()
+    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
+    df["RSI"] = RSIIndicator(df["close"],14).rsi()
+
+    macd = MACD(df["close"])
+    df["macd"] = macd.macd()
+
+    preco = df["close"].iloc[-1]
+
+    sup, res = zonas(df)
+    trend = tendencia(df)
+
+    score = 0
+    erros = []
+
+    # CONTEXTO
+    if trend == "ALTA":
+        score += 1
+    elif trend == "BAIXA":
+        score -= 1
+    else:
+        erros.append("Mercado lateral")
+
+    # EMA
+    if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
+        score += 1
+    else:
+        erros.append("EMA contra")
+
+    # RSI
+    if df["RSI"].iloc[-1] > 50:
+        score += 1
+    else:
+        erros.append("RSI fraco")
+
+    # MACD
+    if df["macd"].iloc[-1] > 0:
+        score += 1
+    else:
+        erros.append("MACD contra")
+
+    # SUPORTE
+    if abs(preco - sup) < (res - sup)*0.3:
+        score += 1
+    else:
+        erros.append("Longe do suporte")
+
+    # DECISÃO
+    agora = datetime.datetime.now()
+    entrada = agora + datetime.timedelta(minutes=5)
+    saida = entrada + datetime.timedelta(minutes=5)
+
+    if score >= 4:
+        return "COMPRA", preco, entrada, saida, erros
+
+    if score <= -3:
+        return "VENDA", preco, entrada, saida, erros
+
+    return "AGUARDAR", preco, entrada, saida, erros
+
+# ======================
+# BACKTEST
+# ======================
+
+def backtest(df):
 
     wins = 0
     loss = 0
-    trades = []
+    erros_log = []
 
-    SL_BASE = 0.0004
-    TP_BASE = 0.0006
-
-    for i in range(250, len(df) - 20):
+    for i in range(200, len(df)-1):
 
         hora = df["datetime"].iloc[i].hour
-        if not (8 <= hora <= 17):
+
+        if hora < 8 or hora > 12:
             continue
 
-        price = df["close"].iloc[i]
+        sub = df.iloc[:i]
 
-        # ======================
-        # TENDÊNCIA GLOBAL
-        # ======================
+        sinal, _, _, _, erros = analisar(sub)
 
-        trend_up = df["EMA21"].iloc[i] > df["EMA200"].iloc[i]
-        trend_down = df["EMA21"].iloc[i] < df["EMA200"].iloc[i]
-
-        # ======================
-        # DETECTAR LATERALIDADE
-        # ======================
-
-        cruzamentos = 0
-        for j in range(i-10, i):
-            if (df["EMA5"].iloc[j] > df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
-               (df["EMA5"].iloc[j] < df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1]):
-                cruzamentos += 1
-
-        if cruzamentos >= 5:
+        if sinal == "AGUARDAR":
             continue
 
-        # ======================
-        # CRUZAMENTO BASE
-        # ======================
+        entrada = df["close"].iloc[i]
+        saida = df["close"].iloc[i+1]
 
-        cross_up = df["EMA5"].iloc[i-3] < df["EMA21"].iloc[i-3] and df["EMA5"].iloc[i] > df["EMA21"].iloc[i]
-        cross_down = df["EMA5"].iloc[i-3] > df["EMA21"].iloc[i-3] and df["EMA5"].iloc[i] < df["EMA21"].iloc[i]
+        if sinal == "COMPRA":
+            if saida > entrada:
+                wins += 1
+            else:
+                loss += 1
+                erros_log.extend(erros)
 
-        if not cross_up and not cross_down:
-            continue
+        if sinal == "VENDA":
+            if saida < entrada:
+                wins += 1
+            else:
+                loss += 1
+                erros_log.extend(erros)
 
-        direction = None
-
-        # ======================
-        # PULLBACK LOGIC
-        # ======================
-
-        pullback = abs(df["close"].iloc[i-1] - df["EMA21"].iloc[i-1]) < abs(df["EMA21"].iloc[i] * 0.0003)
-
-        # ======================
-        # COMPRA
-        # ======================
-
-        if cross_up and trend_up and pullback and vela_forte(df, i):
-
-            direction = "COMPRA"
-
-        # ======================
-        # VENDA
-        # ======================
-
-        if cross_down and trend_down and pullback and vela_forte(df, i):
-
-            direction = "VENDA"
-
-        if direction is None:
-            continue
-
-        entry = price
-
-        result = None
-
-        # ======================
-        # EXECUÇÃO REAL
-        # ======================
-
-        for j in range(i+1, i+25):
-
-            high = df["high"].iloc[j]
-            low = df["low"].iloc[j]
-
-            if direction == "COMPRA":
-
-                if low <= entry - SL_BASE:
-                    result = "LOSS"
-                    break
-
-                if high >= entry + TP_BASE:
-                    result = "WIN"
-                    break
-
-            if direction == "VENDA":
-
-                if high >= entry + SL_BASE:
-                    result = "LOSS"
-                    break
-
-                if low <= entry - TP_BASE:
-                    result = "WIN"
-                    break
-
-        if result is None:
-            continue
-
-        if result == "WIN":
-            wins += 1
-        else:
-            loss += 1
-
-        trades.append({
-            "ativo": ativo,
-            "tipo": direction,
-            "entrada": entry,
-            "resultado": result,
-            "hora": df["datetime"].iloc[i]
-        })
-
-    return wins, loss, trades
+    return wins, loss, erros_log
 
 # ======================
 # EXECUÇÃO
 # ======================
 
-if st.button("🚀 Rodar Robô V2 Pro"):
+df = pegar_dados()
 
-    resultados = []
+trend = tendencia(df)
+st.write("📊 Tendência:", trend)
 
-    for ativo in ATIVOS:
+sinal, preco, entrada, saida, erros = analisar(df)
 
-        df = pegar_dados(ativo)
+st.metric("💰 Preço atual", preco)
 
-        w, l, trades = backtest(df, ativo)
+# ======================
+# SINAL
+# ======================
 
-        total = w + l
-        acc = (w / total * 100) if total > 0 else 0
+if sinal == "COMPRA":
+    st.success(f"""
+🟢 COMPRA
 
-        resultados.append({
-            "ativo": ativo,
-            "wins": w,
-            "loss": l,
-            "acc": acc,
-            "trades": trades
-        })
-
-    melhor = max(resultados, key=lambda x: x["acc"])
-
-    st.subheader("📊 Ranking de Ativos")
-
-    for r in resultados:
-        st.write(f"""
-### {r['ativo']}
-Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
+Entrada: {entrada.strftime('%H:%M')}
+Saída: {saida.strftime('%H:%M')}
 """)
 
-    st.success(f"🔥 Melhor ativo: {melhor['ativo']}")
+elif sinal == "VENDA":
+    st.error(f"""
+🔴 VENDA
 
-    st.subheader("📈 Resultado Final")
+Entrada: {entrada.strftime('%H:%M')}
+Saída: {saida.strftime('%H:%M')}
+""")
 
-    st.write("Wins:", melhor["wins"])
-    st.write("Loss:", melhor["loss"])
-    st.write("Assertividade:", round(melhor["acc"], 2))
+else:
+    st.warning("⚪ AGUARDAR")
 
-    st.subheader("📜 Trades")
+# ======================
+# ERROS ATUAIS
+# ======================
 
-    for t in melhor["trades"][-20:]:
-        st.write(t)
+st.subheader("⚠️ Motivos para não entrar forte")
+
+for e in erros:
+    st.write("-", e)
+
+# ======================
+# BOTÃO BACKTEST
+# ======================
+
+if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
+
+    wins, loss, erros_log = backtest(df)
+
+    total = wins + loss
+
+    taxa = (wins / total * 100) if total > 0 else 0
+
+    st.subheader("📈 Resultado")
+
+    st.write("✅ Wins:", wins)
+    st.write("❌ Loss:", loss)
+    st.write(f"🎯 Assertividade: {taxa:.2f}%")
+
+    st.subheader("⚠️ Principais erros")
+
+    for e in set(erros_log):
+        st.write("-", e)
 
 # ======================
 # GRÁFICO
 # ======================
-
-ativo_grafico = st.selectbox("📊 Ativo", ATIVOS)
-
-df = pegar_dados(ativo_grafico)
 
 fig = go.Figure()
 
