@@ -1,24 +1,32 @@
 import streamlit as st
 from twelvedata import TDClient
 import pandas as pd
-import plotly.graph_objects as go
-from ta.trend import EMAIndicator
 import datetime
+from ta.trend import EMAIndicator
 
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô tendência forte", layout="wide")
-st.title("🤖 Robô Trend Filter FIX")
+st.set_page_config(page_title="Seletor Forex", layout="wide")
+st.title("🤖 Seletor Automático de Ativos Forex")
 
-ATIVO = "USD/JPY"
+# ======================
+# LISTA DE ATIVOS
+# ======================
+
+ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
+
+# ======================
+# DADOS
+# ======================
 
 @st.cache_data(ttl=120)
-def pegar_dados():
+def pegar_dados(ativo):
+
     df = td.time_series(
-        symbol=ATIVO,
+        symbol=ativo,
         interval="5min",
-        outputsize=5000
+        outputsize=500
     ).as_pandas()
 
     df = df[::-1].reset_index()
@@ -30,18 +38,20 @@ def pegar_dados():
     return df.dropna()
 
 # ======================
-# TENDÊNCIA MAIS REALISTA
+# SCORE DE FORÇA DO ATIVO
 # ======================
 
-def tendencia_forte(df):
+def score_ativo(df):
 
-    df["EMA5"] = EMAIndicator(df["close"],5).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
+    df["EMA5"] = EMAIndicator(df["close"], 5).ema_indicator()
+    df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
 
     i = len(df) - 1
 
-    inclinacao = (df["EMA21"].iloc[i] - df["EMA21"].iloc[i-5])
+    # tendência
+    inclinacao = df["EMA21"].iloc[i] - df["EMA21"].iloc[i-5]
 
+    # cruzamentos
     cruzamentos = 0
     for j in range(i-10, i):
         if j <= 0:
@@ -51,170 +61,70 @@ def tendencia_forte(df):
            (df["EMA5"].iloc[j] < df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1]):
             cruzamentos += 1
 
-    # 🔥 AJUSTE IMPORTANTE (mais realista pro JPY)
-    if cruzamentos >= 5:
-        return False, "LATERAL"
+    # score final
+    score = 0
 
-    if abs(inclinacao) < 0.0008:
-        return False, "SEM TENDÊNCIA"
+    # tendência forte
+    if abs(inclinacao) > 0.0008:
+        score += 2
+    else:
+        score -= 1
 
-    return True, "FORTE"
+    # mercado limpo
+    if cruzamentos <= 2:
+        score += 2
+    elif cruzamentos <= 4:
+        score += 1
+    else:
+        score -= 2
 
+    # direção clara
+    distancia = abs(df["EMA5"].iloc[i] - df["EMA21"].iloc[i])
+    if distancia > 0.001:
+        score += 1
 
-# ======================
-# ESTRATÉGIA
-# ======================
-
-def analisar(df):
-
-    df["EMA5"] = EMAIndicator(df["close"],5).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
-
-    preco = df["close"].iloc[-1]
-    erros = []
-
-    i = len(df) - 1
-
-    def vela_forte(i):
-        corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
-        range_total = df["high"].iloc[i] - df["low"].iloc[i]
-        if range_total == 0:
-            return False
-        return (corpo / range_total) > 0.55  # mais flexível
-
-    ok, status = tendencia_forte(df)
-
-    if not ok:
-        erros.append(status)
-        agora = datetime.datetime.now()
-        return "AGUARDAR", preco, agora, agora, erros
-
-    # ======================
-    # CRUZAMENTO MAIS JUSTO
-    # ======================
-
-    if i < 3:
-        return "AGUARDAR", preco, None, None, ["sem dados"]
-
-    # COMPRA
-    if df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1] and df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2]:
-
-        if df["EMA21"].iloc[i] > df["EMA21"].iloc[i-1]:
-
-            if vela_forte(i-1):
-
-                if df["high"].iloc[i] > df["high"].iloc[i-1]:
-
-                    entrada = df["datetime"].iloc[i]
-                    saida = entrada + datetime.timedelta(minutes=5)
-                    return "COMPRA", preco, entrada, saida, erros
-
-    # VENDA
-    if df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1] and df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2]:
-
-        if df["EMA21"].iloc[i] < df["EMA21"].iloc[i-1]:
-
-            if vela_forte(i-1):
-
-                if df["low"].iloc[i] < df["low"].iloc[i-1]:
-
-                    entrada = df["datetime"].iloc[i]
-                    saida = entrada + datetime.timedelta(minutes=5)
-                    return "VENDA", preco, entrada, saida, erros
-
-    return "AGUARDAR", preco, None, None, ["sem setup"]
-
+    return score
 
 # ======================
-# BACKTEST
+# ANALISAR TODOS OS ATIVOS
 # ======================
 
-def backtest(df):
+resultados = []
 
-    wins = 0
-    loss = 0
-    log = []
+for ativo in ATIVOS:
 
-    for i in range(60, len(df)-2):
+    df = pegar_dados(ativo)
 
-        hora = df["datetime"].iloc[i].hour
+    score = score_ativo(df)
 
-        if hora < 8 or hora > 17:
-            continue
+    resultados.append({
+        "ativo": ativo,
+        "score": score
+    })
 
-        sub = df.iloc[:i].copy()
+# ordenar melhor ativo
+melhor = max(resultados, key=lambda x: x["score"])
 
-        sinal, _, _, _, erros = analisar(sub)
+# ======================
+# DISPLAY
+# ======================
 
-        if sinal == "AGUARDAR":
-            continue
+st.subheader("📊 Ranking de Ativos")
 
-        entrada = df["close"].iloc[i+1]
-        saida = df["close"].iloc[i+2]
+for r in sorted(resultados, key=lambda x: x["score"], reverse=True):
+    st.write(f"{r['ativo']} → Score: {r['score']}")
 
-        trade = {
-            "data": str(df["datetime"].iloc[i]),
-            "tipo": sinal,
-            "entrada": entrada,
-            "saida": saida,
-            "erros": erros
-        }
+st.subheader("🔥 MELHOR ATIVO AGORA")
 
-        if sinal == "COMPRA":
-            if saida > entrada:
-                wins += 1
-                trade["resultado"] = "WIN"
-            else:
-                loss += 1
-                trade["resultado"] = "LOSS"
+st.success(f"""
+Ativo: {melhor['ativo']}
+Score: {melhor['score']}
+""")
 
-        if sinal == "VENDA":
-            if saida < entrada:
-                wins += 1
-                trade["resultado"] = "WIN"
-            else:
-                loss += 1
-                trade["resultado"] = "LOSS"
+# ======================
+# OPÇÃO: USAR ATIVO ESCOLHIDO NO ROBÔ
+# ======================
 
-        log.append(trade)
+ATIVO_ESCOLHIDO = melhor["ativo"]
 
-    return wins, loss, log
-
-
-df = pegar_dados()
-
-sinal, preco, entrada, saida, erros = analisar(df)
-
-st.metric("Preço", preco)
-
-st.write("Sinal:", sinal)
-st.write("Erros:", erros)
-
-if st.button("Backtest"):
-
-    wins, loss, log = backtest(df)
-
-    total = wins + loss
-    taxa = (wins / total * 100) if total > 0 else 0
-
-    st.write("Wins:", wins)
-    st.write("Loss:", loss)
-    st.write("Assertividade:", round(taxa, 2))
-
-    st.subheader("LOG")
-
-    for t in log:
-        st.write(t)
-
-
-fig = go.Figure()
-
-fig.add_trace(go.Candlestick(
-    x=df["datetime"],
-    open=df["open"],
-    high=df["high"],
-    low=df["low"],
-    close=df["close"]
-))
-
-st.plotly_chart(fig)
+st.info(f"Robô operando em: {ATIVO_ESCOLHIDO}")
