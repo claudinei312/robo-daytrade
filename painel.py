@@ -12,8 +12,8 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô Forex PRO", layout="wide")
-st.title("🤖 Robô Forex PRO")
+st.set_page_config(page_title="Robô PRO Equilibrado", layout="wide")
+st.title("🤖 Robô PRO Equilibrado + Backtest Avançado")
 
 ATIVOS = ["USD/JPY", "EUR/USD", "GBP/USD"]
 
@@ -62,26 +62,22 @@ def score_ativo(df):
 
     score = 0
 
-    if abs(inclinacao) > 0.0008:
+    if abs(inclinacao) > 0.0006:
         score += 2
     else:
         score -= 1
 
-    if cruzamentos <= 2:
+    if cruzamentos <= 3:
         score += 2
-    elif cruzamentos <= 4:
+    elif cruzamentos <= 5:
         score += 1
     else:
         score -= 2
 
-    distancia = abs(df["EMA5"].iloc[i] - df["EMA21"].iloc[i])
-    if distancia > 0.001:
-        score += 1
-
     return score
 
 # ======================
-# ESTRATÉGIA (SUA BASE)
+# ESTRATÉGIA PRO EQUILIBRADA
 # ======================
 
 def analisar(df):
@@ -91,47 +87,70 @@ def analisar(df):
 
     i = len(df) - 1
     erros = []
+    bloqueios = []
 
     def vela_forte(i):
         corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
         range_total = df["high"].iloc[i] - df["low"].iloc[i]
         if range_total == 0:
             return False
-        return (corpo / range_total) > 0.6
+        return (corpo / range_total) > 0.45  # MAIS REALISTA
 
+    # ======================
+    # FILTRO DE TENDÊNCIA (LEVE)
+    # ======================
+
+    tendencia = df["EMA21"].iloc[i] - df["EMA21"].iloc[i-5]
+
+    # ======================
     # COMPRA
+    # ======================
+
     if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
 
-        if df["EMA21"].iloc[i] > df["EMA21"].iloc[i-1]:
+        if tendencia > -0.0005:  # leve filtro
 
             if vela_forte(i-1):
 
                 if df["high"].iloc[i] > df["high"].iloc[i-1]:
-                    return "COMPRA", erros
-                else:
-                    erros.append("Sem rompimento compra")
-            else:
-                erros.append("Sem força compra")
 
+                    return "COMPRA", erros, bloqueios
+                else:
+                    erros.append("Sem rompimento (opcional)")
+
+            else:
+                erros.append("Sem força suficiente")
+
+        else:
+            bloqueios.append("Tendência fraca compra")
+
+    # ======================
     # VENDA
+    # ======================
+
     if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
 
-        if df["EMA21"].iloc[i] < df["EMA21"].iloc[i-1]:
+        if tendencia < 0.0005:
 
             if vela_forte(i-1):
 
                 if df["low"].iloc[i] < df["low"].iloc[i-1]:
-                    return "VENDA", erros
-                else:
-                    erros.append("Sem rompimento venda")
-            else:
-                erros.append("Sem força venda")
 
-    erros.append("Sem setup")
-    return "AGUARDAR", erros
+                    return "VENDA", erros, bloqueios
+                else:
+                    erros.append("Sem rompimento (opcional)")
+
+            else:
+                erros.append("Sem força suficiente")
+
+        else:
+            bloqueios.append("Tendência fraca venda")
+
+    bloqueios.append("Sem setup")
+    return "AGUARDAR", erros, bloqueios
 
 # ======================
-# BACKTEST
+# BACKTEST PROFISSIONAL
 # ======================
 
 def backtest(df):
@@ -140,10 +159,11 @@ def backtest(df):
     loss = 0
     log = []
 
-    bloqueios = {
+    stats_erros = {
         "sem_setup": 0,
         "forca": 0,
-        "rompimento": 0
+        "rompimento": 0,
+        "tendencia": 0
     }
 
     for i in range(60, len(df)-2):
@@ -155,10 +175,21 @@ def backtest(df):
 
         sub = df.iloc[:i]
 
-        sinal, erros = analisar(sub)
+        sinal, erros, bloqueios = analisar(sub)
 
         if sinal == "AGUARDAR":
-            bloqueios["sem_setup"] += 1
+
+            stats_erros["sem_setup"] += 1
+
+            if "Sem força suficiente" in erros:
+                stats_erros["forca"] += 1
+
+            if "Sem rompimento" in erros:
+                stats_erros["rompimento"] += 1
+
+            if bloqueios:
+                stats_erros["tendencia"] += 1
+
             continue
 
         entrada = df["close"].iloc[i+1]
@@ -169,7 +200,7 @@ def backtest(df):
             "tipo": sinal,
             "entrada": entrada,
             "saida": saida,
-            "erros": erros
+            "erros": erros + bloqueios
         }
 
         if sinal == "COMPRA":
@@ -190,10 +221,10 @@ def backtest(df):
 
         log.append(trade)
 
-    return wins, loss, log, bloqueios
+    return wins, loss, log, stats_erros
 
 # ======================
-# SELETOR DE ATIVO
+# SELETOR DE ATIVOS
 # ======================
 
 scores = []
@@ -210,8 +241,6 @@ for ativo in ATIVOS:
     })
 
 melhor = max(scores, key=lambda x: x["score"])
-
-ATIVO_ESCOLHIDO = melhor["ativo"]
 df = melhor["df"]
 
 # ======================
@@ -223,21 +252,22 @@ st.subheader("📊 Ranking de Ativos")
 for s in sorted(scores, key=lambda x: x["score"], reverse=True):
     st.write(f"{s['ativo']} → Score: {s['score']}")
 
-st.success(f"🔥 ATIVO ESCOLHIDO: {ATIVO_ESCOLHIDO}")
+st.success(f"🔥 ATIVO ESCOLHIDO: {melhor['ativo']}")
 
-sinal, erros = analisar(df)
+sinal, erros, bloqueios = analisar(df)
 
 st.subheader("Sinal Atual")
 st.write(sinal)
 st.write(erros)
+st.write(bloqueios)
 
 # ======================
 # BACKTEST
 # ======================
 
-if st.button("📊 Rodar Backtest Completo"):
+if st.button("📊 Rodar Backtest PRO"):
 
-    wins, loss, log, bloqueios = backtest(df)
+    wins, loss, log, stats_erros = backtest(df)
 
     total = wins + loss
     taxa = (wins / total * 100) if total > 0 else 0
@@ -248,11 +278,11 @@ if st.button("📊 Rodar Backtest Completo"):
     st.write("Loss:", loss)
     st.write("Assertividade:", round(taxa,2))
 
-    st.subheader("BLOQUEIOS")
+    st.subheader("ERROS DETALHADOS")
 
-    st.write(bloqueios)
+    st.write(stats_erros)
 
-    st.subheader("LOG DETALHADO")
+    st.subheader("LOG COMPLETO")
 
     for t in log:
         st.write(t)
