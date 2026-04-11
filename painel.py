@@ -71,12 +71,7 @@ def analisar(df):
     trend = tendencia(df)
 
     erros = []
-
     i = len(df) - 1
-
-    # ======================
-    # VELA FORTE
-    # ======================
 
     def vela_forte(i):
         corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
@@ -85,22 +80,13 @@ def analisar(df):
             abs(df["close"].iloc[i-2] - df["open"].iloc[i-2]) +
             abs(df["close"].iloc[i-3] - df["open"].iloc[i-3])
         ) / 3
-
         return corpo > media
-
-    # ======================
-    # TOQUE NA M21
-    # ======================
 
     def tocou_m21(i):
         return df["low"].iloc[i] <= df["EMA21"].iloc[i] <= df["high"].iloc[i]
 
-    # ======================
-    # FILTRO LATERAL (IMPORTANTE)
-    # ======================
-
+    # Filtro lateral
     cruzamentos = 0
-
     for j in range(i-10, i):
         if (df["close"].iloc[j] > df["EMA21"].iloc[j] and df["close"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
            (df["close"].iloc[j] < df["EMA21"].iloc[j] and df["close"].iloc[j-1] > df["EMA21"].iloc[j-1]):
@@ -111,35 +97,25 @@ def analisar(df):
         agora = datetime.datetime.now()
         return "AGUARDAR", preco, agora, agora, erros
 
-    # ======================
     # PULLBACK
-    # ======================
+    if trend == "ALTA" and tocou_m21(i):
+        if df["close"].iloc[i] > df["open"].iloc[i] and vela_forte(i):
+            entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
+            saida = entrada + datetime.timedelta(minutes=5)
+            return "COMPRA", preco, entrada, saida, erros
+        else:
+            erros.append("Pullback sem força")
 
-    if trend == "ALTA":
-        if tocou_m21(i):
-            if df["close"].iloc[i] > df["open"].iloc[i] and vela_forte(i):
-                entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
-                saida = entrada + datetime.timedelta(minutes=5)
-                return "COMPRA", preco, entrada, saida, erros
-            else:
-                erros.append("Sem força na compra")
+    if trend == "BAIXA" and tocou_m21(i):
+        if df["close"].iloc[i] < df["open"].iloc[i] and vela_forte(i):
+            entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
+            saida = entrada + datetime.timedelta(minutes=5)
+            return "VENDA", preco, entrada, saida, erros
+        else:
+            erros.append("Pullback sem força")
 
-    if trend == "BAIXA":
-        if tocou_m21(i):
-            if df["close"].iloc[i] < df["open"].iloc[i] and vela_forte(i):
-                entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
-                saida = entrada + datetime.timedelta(minutes=5)
-                return "VENDA", preco, entrada, saida, erros
-            else:
-                erros.append("Sem força na venda")
-
-    # ======================
-    # CRUZAMENTO EMA5 x M21
-    # ======================
-
+    # CRUZAMENTO
     if i > 3:
-
-        # COMPRA
         if df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1] and df["EMA5"].iloc[i] > df["EMA21"].iloc[i]:
             if df["close"].iloc[i] > df["open"].iloc[i] and vela_forte(i):
                 entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
@@ -148,7 +124,6 @@ def analisar(df):
             else:
                 erros.append("Cruzamento sem força")
 
-        # VENDA
         if df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1] and df["EMA5"].iloc[i] < df["EMA21"].iloc[i]:
             if df["close"].iloc[i] < df["open"].iloc[i] and vela_forte(i):
                 entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
@@ -161,4 +136,108 @@ def analisar(df):
 
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
-    saida = entrada +
+    saida = entrada + datetime.timedelta(minutes=5)
+
+    return "AGUARDAR", preco, entrada, saida, erros
+
+# ======================
+# BACKTEST (COM LOG DE ERROS MELHORADO)
+# ======================
+
+def backtest(df):
+
+    wins = 0
+    loss = 0
+    erros_log = []
+
+    for i in range(50, len(df)-2):
+
+        hora = df["datetime"].iloc[i].hour
+
+        if hora < 8 or hora > 12:
+            continue
+
+        sub = df.iloc[:i].copy()
+
+        sinal, _, _, _, erros = analisar(sub)
+
+        if sinal == "AGUARDAR":
+            continue
+
+        entrada = df["close"].iloc[i+1]
+        saida = df["close"].iloc[i+2]
+
+        if sinal == "COMPRA":
+            if saida > entrada:
+                wins += 1
+            else:
+                loss += 1
+                erros_log.extend(erros if erros else ["Entrada fraca compra"])
+
+        elif sinal == "VENDA":
+            if saida < entrada:
+                wins += 1
+            else:
+                loss += 1
+                erros_log.extend(erros if erros else ["Entrada fraca venda"])
+
+    return wins, loss, erros_log
+
+# ======================
+# EXECUÇÃO
+# ======================
+
+df = pegar_dados()
+
+trend = tendencia(df)
+st.write("📊 Tendência:", trend)
+
+sinal, preco, entrada, saida, erros = analisar(df)
+
+st.metric("💰 Preço atual", preco)
+
+if sinal == "COMPRA":
+    st.success(f"🟢 COMPRA\nEntrada: {entrada.strftime('%H:%M')}\nSaída: {saida.strftime('%H:%M')}")
+
+elif sinal == "VENDA":
+    st.error(f"🔴 VENDA\nEntrada: {entrada.strftime('%H:%M')}\nSaída: {saida.strftime('%H:%M')}")
+
+else:
+    st.warning("⚪ AGUARDAR")
+
+st.subheader("⚠️ Motivos para não entrar forte")
+
+for e in erros:
+    st.write("-", e)
+
+if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
+
+    wins, loss, erros_log = backtest(df)
+
+    total = wins + loss
+    taxa = (wins / total * 100) if total > 0 else 0
+
+    st.subheader("📈 Resultado")
+
+    st.write("✅ Wins:", wins)
+    st.write("❌ Loss:", loss)
+    st.write(f"🎯 Assertividade: {taxa:.2f}%")
+
+    st.subheader("⚠️ Principais erros")
+
+    for e in set(erros_log):
+        st.write("-", e)
+
+fig = go.Figure()
+
+fig.add_trace(go.Candlestick(
+    x=df["datetime"],
+    open=df["open"],
+    high=df["high"],
+    low=df["low"],
+    close=df["close"]
+))
+
+fig.update_layout(template="plotly_dark", height=500)
+
+st.plotly_chart(fig, use_container_width=True)
