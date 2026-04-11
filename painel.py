@@ -59,7 +59,7 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# ESTRATÉGIA PROFISSIONAL
+# ESTRATÉGIA
 # ======================
 
 def analisar(df):
@@ -73,7 +73,7 @@ def analisar(df):
     i = len(df) - 1
 
     # ======================
-    # VELA FORTE REAL
+    # VELA FORTE (AJUSTADA)
     # ======================
 
     def vela_forte(i):
@@ -83,7 +83,7 @@ def analisar(df):
         if range_total == 0:
             return False
 
-        return (corpo / range_total) > 0.6  # corpo dominante
+        return (corpo / range_total) > 0.5
 
     # ======================
     # FILTRO DE LATERAL
@@ -101,7 +101,7 @@ def analisar(df):
         return "AGUARDAR", preco, agora, agora, erros
 
     # ======================
-    # CRUZAMENTO PROFISSIONAL
+    # CRUZAMENTO AJUSTADO
     # ======================
 
     if i > 3:
@@ -111,28 +111,25 @@ def analisar(df):
         # COMPRA
         if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
 
-            # afastamento antes (evita lateral)
-            if dist_antes < 0.0002:
+            if dist_antes < 0.0001:
                 erros.append("Cruzamento muito próximo")
             else:
 
-                # M21 inclinada pra cima
                 if df["EMA21"].iloc[i] <= df["EMA21"].iloc[i-1]:
                     erros.append("M21 sem inclinação alta")
                 else:
 
-                    # vela forte
                     if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
 
-                        # rompimento + continuidade
-                        if df["high"].iloc[i] > df["high"].iloc[i-1] and df["close"].iloc[i] > df["open"].iloc[i]:
+                        # 🔥 AGORA: só precisa romper (mais entradas)
+                        if df["high"].iloc[i] > df["high"].iloc[i-1]:
 
                             entrada = df["datetime"].iloc[i]
                             saida = entrada + datetime.timedelta(minutes=5)
 
                             return "COMPRA", preco, entrada, saida, erros
                         else:
-                            erros.append("Sem continuidade compra")
+                            erros.append("Sem rompimento compra")
 
                     else:
                         erros.append("Sem força compra")
@@ -140,7 +137,7 @@ def analisar(df):
         # VENDA
         if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
 
-            if dist_antes < 0.0002:
+            if dist_antes < 0.0001:
                 erros.append("Cruzamento muito próximo")
             else:
 
@@ -150,14 +147,14 @@ def analisar(df):
 
                     if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
 
-                        if df["low"].iloc[i] < df["low"].iloc[i-1] and df["close"].iloc[i] < df["open"].iloc[i]:
+                        if df["low"].iloc[i] < df["low"].iloc[i-1]:
 
                             entrada = df["datetime"].iloc[i]
                             saida = entrada + datetime.timedelta(minutes=5)
 
                             return "VENDA", preco, entrada, saida, erros
                         else:
-                            erros.append("Sem continuidade venda")
+                            erros.append("Sem rompimento venda")
 
                     else:
                         erros.append("Sem força venda")
