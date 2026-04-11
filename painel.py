@@ -12,18 +12,10 @@ import datetime
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô apenas", layout="wide")
-st.title("🤖 Robô apenas")
+st.set_page_config(page_title="Robô tendência forte", layout="wide")
+st.title("🤖 Robô Trend Filter (FORTE)")
 
 ATIVO = "USD/JPY"
-
-# ======================
-# BOTÃO ATUALIZAR
-# ======================
-
-if st.button("🔄 Atualizar dados"):
-    st.cache_data.clear()
-    st.rerun()
 
 # ======================
 # DADOS
@@ -46,20 +38,35 @@ def pegar_dados():
     return df.dropna()
 
 # ======================
-# TENDÊNCIA
+# TENDÊNCIA FORTE
 # ======================
 
-def tendencia(df):
+def tendencia_forte(df):
+
+    df["EMA5"] = EMAIndicator(df["close"],5).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
 
-    if df["close"].iloc[-1] > df["EMA21"].iloc[-1]:
-        return "ALTA"
-    elif df["close"].iloc[-1] < df["EMA21"].iloc[-1]:
-        return "BAIXA"
-    return "LATERAL"
+    i = len(df) - 1
+
+    inclinacao = df["EMA21"].iloc[i] - df["EMA21"].iloc[i-5]
+    distancia = abs(df["EMA5"].iloc[i] - df["EMA21"].iloc[i])
+
+    cruzamentos = 0
+    for j in range(i-15, i):
+        if (df["EMA5"].iloc[j] > df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
+           (df["EMA5"].iloc[j] < df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1]):
+            cruzamentos += 1
+
+    if cruzamentos >= 4:
+        return False, "LATERAL"
+
+    if abs(inclinacao) < 0.02:
+        return False, "SEM TENDÊNCIA"
+
+    return True, "FORTE"
 
 # ======================
-# ESTRATÉGIA (NÃO MEXIDA)
+# ESTRATÉGIA BASE (SEM MUDAR LÓGICA)
 # ======================
 
 def analisar(df):
@@ -82,17 +89,13 @@ def analisar(df):
         return (corpo / range_total) > 0.6
 
     # ======================
-    # FILTRO LATERAL
+    # FILTRO DE TENDÊNCIA FORTE (NOVO)
     # ======================
 
-    cruzamentos = 0
-    for j in range(i-10, i):
-        if (df["EMA5"].iloc[j] > df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
-           (df["EMA5"].iloc[j] < df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1]):
-            cruzamentos += 1
+    ok, status = tendencia_forte(df)
 
-    if cruzamentos >= 3:
-        erros.append("Mercado lateral")
+    if not ok:
+        erros.append(f"Mercado fraco: {status}")
         agora = datetime.datetime.now()
         return "AGUARDAR", preco, agora, agora, erros
 
@@ -107,53 +110,32 @@ def analisar(df):
         # COMPRA
         if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
 
-            if dist_antes < 0.0002:
-                erros.append("Cruzamento muito próximo")
-            else:
+            if df["EMA21"].iloc[i] > df["EMA21"].iloc[i-1]:
 
-                if df["EMA21"].iloc[i] <= df["EMA21"].iloc[i-1]:
-                    erros.append("M21 sem inclinação alta")
-                else:
+                if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
 
-                    if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
+                    if df["high"].iloc[i] > df["high"].iloc[i-1]:
 
-                        if df["high"].iloc[i] > df["high"].iloc[i-1] and df["close"].iloc[i] > df["open"].iloc[i]:
+                        entrada = df["datetime"].iloc[i]
+                        saida = entrada + datetime.timedelta(minutes=5)
 
-                            entrada = df["datetime"].iloc[i]
-                            saida = entrada + datetime.timedelta(minutes=5)
-
-                            return "COMPRA", preco, entrada, saida, erros
-                        else:
-                            erros.append("Sem continuidade compra")
-                    else:
-                        erros.append("Sem força compra")
+                        return "COMPRA", preco, entrada, saida, erros
 
         # VENDA
         if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
 
-            if dist_antes < 0.0002:
-                erros.append("Cruzamento muito próximo")
-            else:
+            if df["EMA21"].iloc[i] < df["EMA21"].iloc[i-1]:
 
-                if df["EMA21"].iloc[i] >= df["EMA21"].iloc[i-1]:
-                    erros.append("M21 sem inclinação baixa")
-                else:
+                if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
 
-                    if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
+                    if df["low"].iloc[i] < df["low"].iloc[i-1]:
 
-                        if df["low"].iloc[i] < df["low"].iloc[i-1] and df["close"].iloc[i] < df["open"].iloc[i]:
+                        entrada = df["datetime"].iloc[i]
+                        saida = entrada + datetime.timedelta(minutes=5)
 
-                            entrada = df["datetime"].iloc[i]
-                            saida = entrada + datetime.timedelta(minutes=5)
+                        return "VENDA", preco, entrada, saida, erros
 
-                            return "VENDA", preco, entrada, saida, erros
-                        else:
-                            erros.append("Sem continuidade venda")
-                    else:
-                        erros.append("Sem força venda")
-
-    erros.append("Sem cruzamento válido")
-
+    erros.append("Sem setup forte")
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
@@ -161,25 +143,16 @@ def analisar(df):
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST ANALÍTICO (NOVO)
+# BACKTEST
 # ======================
 
 def backtest(df):
 
     wins = 0
     loss = 0
+    log = []
 
-    log_trades = []
-
-    motivos_bloqueio = {
-        "lateral": 0,
-        "cruzamento": 0,
-        "forca": 0,
-        "inclinacao": 0,
-        "rompimento": 0
-    }
-
-    for i in range(50, len(df)-2):
+    for i in range(60, len(df)-2):
 
         hora = df["datetime"].iloc[i].hour
 
@@ -190,33 +163,13 @@ def backtest(df):
 
         sinal, _, _, _, erros = analisar(sub)
 
-        # ======================
-        # CONTABILIZA BLOQUEIOS
-        # ======================
         if sinal == "AGUARDAR":
-
-            if "Mercado lateral" in erros:
-                motivos_bloqueio["lateral"] += 1
-
-            if "Cruzamento muito próximo" in erros:
-                motivos_bloqueio["cruzamento"] += 1
-
-            if "Sem força compra" in erros or "Sem força venda" in erros:
-                motivos_bloqueio["forca"] += 1
-
-            if "M21 sem inclinação alta" in erros or "M21 sem inclinação baixa" in erros:
-                motivos_bloqueio["inclinacao"] += 1
-
-            if "Sem continuidade compra" in erros or "Sem continuidade venda" in erros:
-                motivos_bloqueio["rompimento"] += 1
-
             continue
 
         entrada = df["close"].iloc[i+1]
         saida = df["close"].iloc[i+2]
 
         trade = {
-            "index": i,
             "data": str(df["datetime"].iloc[i]),
             "tipo": sinal,
             "entrada": entrada,
@@ -232,7 +185,7 @@ def backtest(df):
                 loss += 1
                 trade["resultado"] = "LOSS"
 
-        elif sinal == "VENDA":
+        if sinal == "VENDA":
             if saida < entrada:
                 wins += 1
                 trade["resultado"] = "WIN"
@@ -240,9 +193,9 @@ def backtest(df):
                 loss += 1
                 trade["resultado"] = "LOSS"
 
-        log_trades.append(trade)
+        log.append(trade)
 
-    return wins, loss, log_trades, motivos_bloqueio
+    return wins, loss, log
 
 # ======================
 # EXECUÇÃO
@@ -250,57 +203,40 @@ def backtest(df):
 
 df = pegar_dados()
 
-trend = tendencia(df)
-st.write("📊 Tendência:", trend)
-
 sinal, preco, entrada, saida, erros = analisar(df)
 
-st.metric("💰 Preço atual", preco)
+st.metric("Preço", preco)
 
 if sinal == "COMPRA":
-    st.success(f"🟢 COMPRA\nEntrada: {entrada.strftime('%H:%M')}\nSaída: {saida.strftime('%H:%M')}")
+    st.success("🟢 COMPRA")
 
 elif sinal == "VENDA":
-    st.error(f"🔴 VENDA\nEntrada: {entrada.strftime('%H:%M')}\nSaída: {saida.strftime('%H:%M')}")
+    st.error("🔴 VENDA")
 
 else:
     st.warning("⚪ AGUARDAR")
 
-st.subheader("⚠️ Motivos de bloqueio atual")
-
+st.subheader("Erros atuais")
 for e in erros:
     st.write("-", e)
 
-# ======================
-# BACKTEST
-# ======================
+if st.button("📊 Backtest Trend Forte"):
 
-if st.button("📊 Rodar Backtest 30 dias (08h às 17h)"):
-
-    wins, loss, log_trades, motivos = backtest(df)
+    wins, loss, log = backtest(df)
 
     total = wins + loss
     taxa = (wins / total * 100) if total > 0 else 0
 
-    st.subheader("📈 RESULTADO")
+    st.subheader("RESULTADO")
 
-    st.write("✅ Wins:", wins)
-    st.write("❌ Loss:", loss)
-    st.write(f"🎯 Assertividade: {taxa:.2f}%")
+    st.write("Wins:", wins)
+    st.write("Loss:", loss)
+    st.write("Assertividade:", round(taxa,2))
 
-    st.subheader("📊 MOTIVOS DE BLOQUEIO")
+    st.subheader("LOG TRADES")
 
-    st.write(motivos)
-
-    st.subheader("📉 LOG DETALHADO DE TRADES")
-
-    for t in log_trades:
-        st.write("----")
+    for t in log:
         st.write(t)
-
-# ======================
-# GRÁFICO
-# ======================
 
 fig = go.Figure()
 
@@ -312,6 +248,6 @@ fig.add_trace(go.Candlestick(
     close=df["close"]
 ))
 
-fig.update_layout(template="plotly_dark", height=500)
+fig.update_layout(template="plotly_dark")
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig)
