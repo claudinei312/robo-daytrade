@@ -2,8 +2,7 @@ import streamlit as st
 from twelvedata import TDClient
 import pandas as pd
 import plotly.graph_objects as go
-from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator
 import datetime
 
 # ======================
@@ -46,99 +45,111 @@ def pegar_dados():
     return df.dropna()
 
 # ======================
-# TENDÊNCIA
+# TENDÊNCIA (AGORA M21)
 # ======================
 
 def tendencia(df):
-    df["EMA50"] = EMAIndicator(df["close"],50).ema_indicator()
-    df["EMA200"] = EMAIndicator(df["close"],200).ema_indicator()
+    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
 
-    if df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1]:
+    if df["close"].iloc[-1] > df["EMA21"].iloc[-1]:
         return "ALTA"
-    elif df["EMA50"].iloc[-1] < df["EMA200"].iloc[-1]:
+    elif df["close"].iloc[-1] < df["EMA21"].iloc[-1]:
         return "BAIXA"
     return "LATERAL"
 
 # ======================
-# SUPORTE / RESISTÊNCIA
-# ======================
-
-def zonas(df):
-    ult = df.tail(144)  # últimas 12h (M5)
-
-    suporte = ult["low"].min()
-    resistencia = ult["high"].max()
-
-    return suporte, resistencia
-
-# ======================
-# ESTRATÉGIA
+# ESTRATÉGIA NOVA
 # ======================
 
 def analisar(df):
 
-    df["EMA9"] = EMAIndicator(df["close"],9).ema_indicator()
+    df["EMA5"] = EMAIndicator(df["close"],5).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
-    df["RSI"] = RSIIndicator(df["close"],14).rsi()
-
-    macd = MACD(df["close"])
-    df["macd"] = macd.macd()
 
     preco = df["close"].iloc[-1]
-
-    sup, res = zonas(df)
     trend = tendencia(df)
 
-    score = 0
     erros = []
 
-    # CONTEXTO
+    # ======================
+    # FUNÇÃO VELA FORTE
+    # ======================
+
+    def vela_forte(i):
+        corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
+        media = (
+            abs(df["close"].iloc[i-1] - df["open"].iloc[i-1]) +
+            abs(df["close"].iloc[i-2] - df["open"].iloc[i-2]) +
+            abs(df["close"].iloc[i-3] - df["open"].iloc[i-3])
+        ) / 3
+
+        return corpo > media
+
+    # ======================
+    # FUNÇÃO TOQUE NA M21
+    # ======================
+
+    def tocou_m21(i):
+        return df["low"].iloc[i] <= df["EMA21"].iloc[i] <= df["high"].iloc[i]
+
+    # ======================
+    # PULLBACK
+    # ======================
+
+    i = len(df) - 1
+
     if trend == "ALTA":
-        score += 1
-    elif trend == "BAIXA":
-        score -= 1
-    else:
-        erros.append("Mercado lateral")
+        if tocou_m21(i):
+            if df["close"].iloc[i] > df["open"].iloc[i] and vela_forte(i):
+                entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
+                saida = entrada + datetime.timedelta(minutes=5)
+                return "COMPRA", preco, entrada, saida, erros
+            else:
+                erros.append("Sem vela forte compra")
 
-    # EMA
-    if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1]:
-        score += 1
-    else:
-        erros.append("EMA contra")
+    if trend == "BAIXA":
+        if tocou_m21(i):
+            if df["close"].iloc[i] < df["open"].iloc[i] and vela_forte(i):
+                entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
+                saida = entrada + datetime.timedelta(minutes=5)
+                return "VENDA", preco, entrada, saida, erros
+            else:
+                erros.append("Sem vela forte venda")
 
-    # RSI
-    if df["RSI"].iloc[-1] > 50:
-        score += 1
-    else:
-        erros.append("RSI fraco")
+    # ======================
+    # CRUZAMENTO EMA5 x M21
+    # ======================
 
-    # MACD
-    if df["macd"].iloc[-1] > 0:
-        score += 1
-    else:
-        erros.append("MACD contra")
+    if i > 3:
 
-    # SUPORTE
-    if abs(preco - sup) < (res - sup)*0.3:
-        score += 1
-    else:
-        erros.append("Longe do suporte")
+        # COMPRA
+        if df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1] and df["EMA5"].iloc[i] > df["EMA21"].iloc[i]:
+            if df["close"].iloc[i] > df["open"].iloc[i] and vela_forte(i):
+                entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
+                saida = entrada + datetime.timedelta(minutes=5)
+                return "COMPRA", preco, entrada, saida, erros
+            else:
+                erros.append("Cruzamento sem força")
 
-    # DECISÃO
+        # VENDA
+        if df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1] and df["EMA5"].iloc[i] < df["EMA21"].iloc[i]:
+            if df["close"].iloc[i] < df["open"].iloc[i] and vela_forte(i):
+                entrada = df["datetime"].iloc[i] + datetime.timedelta(minutes=5)
+                saida = entrada + datetime.timedelta(minutes=5)
+                return "VENDA", preco, entrada, saida, erros
+            else:
+                erros.append("Cruzamento sem força")
+
+    erros.append("Sem entrada válida")
+
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
 
-    if score >= 4:
-        return "COMPRA", preco, entrada, saida, erros
-
-    if score <= -3:
-        return "VENDA", preco, entrada, saida, erros
-
     return "AGUARDAR", preco, entrada, saida, erros
 
 # ======================
-# BACKTEST
+# BACKTEST (NÃO ALTERADO)
 # ======================
 
 def backtest(df):
