@@ -38,31 +38,28 @@ def pegar_dados(ativo):
     return df.dropna()
 
 # ======================
-# TENDÊNCIA
+# BACKTEST REAL (SEM DEPENDER DA FUNÇÃO ANALISAR)
 # ======================
 
-def tendencia(df):
-    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
-
-    if df["close"].iloc[-1] > df["EMA21"].iloc[-1]:
-        return "ALTA"
-    elif df["close"].iloc[-1] < df["EMA21"].iloc[-1]:
-        return "BAIXA"
-    return "LATERAL"
-
-# ======================
-# SUA ESTRATÉGIA (NÃO ALTERADA)
-# ======================
-
-def analisar(df):
+def backtest(df):
 
     df["EMA5"] = EMAIndicator(df["close"],5).ema_indicator()
     df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
 
-    preco = df["close"].iloc[-1]
-    erros = []
+    wins = 0
+    loss = 0
 
-    i = len(df) - 1
+    erros_log = []
+    trades = []
+
+    # estatísticas de erro
+    stats = {
+        "sem_setup": 0,
+        "forca": 0,
+        "cruzamento": 0,
+        "lateral": 0,
+        "rompimento": 0
+    }
 
     def vela_forte(i):
         corpo = abs(df["close"].iloc[i] - df["open"].iloc[i])
@@ -71,93 +68,47 @@ def analisar(df):
             return False
         return (corpo / rng) > 0.6
 
-    cruzamentos = 0
-    for j in range(i-10, i):
-        if (df["EMA5"].iloc[j] > df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] < df["EMA21"].iloc[j-1]) or \
-           (df["EMA5"].iloc[j] < df["EMA21"].iloc[j] and df["EMA5"].iloc[j-1] > df["EMA21"].iloc[j-1]):
-            cruzamentos += 1
-
-    if cruzamentos >= 3:
-        erros.append("Mercado lateral")
-        agora = datetime.datetime.now()
-        return "AGUARDAR", preco, agora, agora, erros
-
-    if i > 3:
-
-        dist_antes = abs(df["EMA5"].iloc[i-2] - df["EMA21"].iloc[i-2])
-
-        # COMPRA
-        if df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]:
-
-            if dist_antes >= 0.0002:
-
-                if df["EMA21"].iloc[i] > df["EMA21"].iloc[i-1]:
-
-                    if df["close"].iloc[i-1] > df["open"].iloc[i-1] and vela_forte(i-1):
-
-                        entrada = df["datetime"].iloc[i]
-                        saida = entrada + datetime.timedelta(minutes=5)
-
-                        return "COMPRA", preco, entrada, saida, erros
-
-        # VENDA
-        if df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]:
-
-            if dist_antes >= 0.0002:
-
-                if df["EMA21"].iloc[i] < df["EMA21"].iloc[i-1]:
-
-                    if df["close"].iloc[i-1] < df["open"].iloc[i-1] and vela_forte(i-1):
-
-                        entrada = df["datetime"].iloc[i]
-                        saida = entrada + datetime.timedelta(minutes=5)
-
-                        return "VENDA", preco, entrada, saida, erros
-
-    erros.append("Sem cruzamento válido")
-    agora = datetime.datetime.now()
-
-    return "AGUARDAR", preco, agora, agora, erros
-
-# ======================
-# BACKTEST PROFISSIONAL (NOVO)
-# ======================
-
-def backtest_real(df):
-
-    df["EMA5"] = EMAIndicator(df["close"],5).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
-
-    wins = 0
-    loss = 0
-    log = []
-
-    SL = 0.0008
-    TP = 0.0012
-
-    for i in range(100, len(df)-10):
+    for i in range(50, len(df)-10):
 
         hora = df["datetime"].iloc[i].hour
-
         if not (8 <= hora <= 11 or 13 <= hora <= 15):
             continue
 
-        sub = df.iloc[:i]
+        cruz_compra = (
+            df["EMA5"].iloc[i-2] < df["EMA21"].iloc[i-2] and
+            df["EMA5"].iloc[i-1] > df["EMA21"].iloc[i-1]
+        )
 
-        sinal, _, _, _, erros = analisar(sub)
+        cruz_venda = (
+            df["EMA5"].iloc[i-2] > df["EMA21"].iloc[i-2] and
+            df["EMA5"].iloc[i-1] < df["EMA21"].iloc[i-1]
+        )
 
-        if sinal == "AGUARDAR":
+        if not cruz_compra and not cruz_venda:
+            stats["sem_setup"] += 1
             continue
 
         entry = df["close"].iloc[i]
 
-        direction = sinal
+        SL = 0.0008
+        TP = 0.0012
 
         result = None
+        tipo = None
 
-        for j in range(i+1, i+10):
+        # ======================
+        # COMPRA
+        # ======================
 
-            if direction == "COMPRA":
+        if cruz_compra:
+
+            tipo = "COMPRA"
+
+            if not vela_forte(i-1):
+                stats["forca"] += 1
+                continue
+
+            for j in range(i+1, i+8):
 
                 if df["low"].iloc[j] <= entry * (1 - SL):
                     result = "LOSS"
@@ -167,7 +118,19 @@ def backtest_real(df):
                     result = "WIN"
                     break
 
-            if direction == "VENDA":
+        # ======================
+        # VENDA
+        # ======================
+
+        if cruz_venda:
+
+            tipo = "VENDA"
+
+            if not vela_forte(i-1):
+                stats["forca"] += 1
+                continue
+
+            for j in range(i+1, i+8):
 
                 if df["high"].iloc[j] >= entry * (1 + SL):
                     result = "LOSS"
@@ -185,19 +148,21 @@ def backtest_real(df):
         else:
             loss += 1
 
-        log.append({
-            "tipo": direction,
+        trades.append({
+            "ativo": "USD/JPY",
+            "tipo": tipo,
+            "entrada": entry,
             "resultado": result,
             "hora": df["datetime"].iloc[i]
         })
 
-    return wins, loss, log
+    return wins, loss, trades, stats
 
 # ======================
-# EXECUÇÃO (3 ATIVOS)
+# EXECUÇÃO MULTI-ATIVO
 # ======================
 
-if st.button("📊 Rodar Backtest PROFISSIONAL"):
+if st.button("📊 Rodar Backtest Completo"):
 
     resultados = []
 
@@ -205,7 +170,7 @@ if st.button("📊 Rodar Backtest PROFISSIONAL"):
 
         df = pegar_dados(ativo)
 
-        w, l, log = backtest_real(df)
+        w, l, trades, stats = backtest(df)
 
         total = w + l
         acc = (w / total * 100) if total > 0 else 0
@@ -215,23 +180,37 @@ if st.button("📊 Rodar Backtest PROFISSIONAL"):
             "wins": w,
             "loss": l,
             "acc": acc,
-            "log": log,
+            "trades": trades,
+            "stats": stats,
             "df": df
         })
 
     melhor = max(resultados, key=lambda x: x["acc"])
 
-    st.subheader("📊 Ranking")
+    # ======================
+    # RANKING
+    # ======================
+
+    st.subheader("📊 Ranking de Ativos")
 
     for r in resultados:
+
         st.write(f"""
 ### {r['ativo']}
 Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
+
+Erros:
+- sem_setup: {r['stats']['sem_setup']}
+- força: {r['stats']['forca']}
 """)
 
     st.success(f"🔥 Melhor ativo: {melhor['ativo']}")
 
-    w, l, log = backtest_real(melhor["df"])
+    # ======================
+    # RESULTADO FINAL
+    # ======================
+
+    w, l, trades, stats = backtest(melhor["df"])
 
     st.subheader("📈 RESULTADO FINAL")
 
@@ -239,13 +218,17 @@ Wins: {r['wins']} | Loss: {r['loss']} | Assertividade: {round(r['acc'],2)}%
     st.write("Loss:", l)
     st.write("Assertividade:", round((w/(w+l))*100 if (w+l)>0 else 0,2))
 
-    st.subheader("📜 TRADES")
+    # ======================
+    # TRADES DETALHADOS
+    # ======================
 
-    for t in log[-20:]:
+    st.subheader("📜 TRADES DETALHADOS")
+
+    for t in trades[-30:]:
         st.write(t)
 
 # ======================
-# GRÁFICO ORIGINAL (NÃO ALTERADO)
+# GRÁFICO
 # ======================
 
 df = pegar_dados("USD/JPY")
@@ -259,7 +242,5 @@ fig.add_trace(go.Candlestick(
     low=df["low"],
     close=df["close"]
 ))
-
-fig.update_layout(template="plotly_dark", height=500)
 
 st.plotly_chart(fig, use_container_width=True)
