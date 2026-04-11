@@ -1,23 +1,26 @@
 import streamlit as st
 from twelvedata import TDClient
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
 import datetime
 
 # ======================
-# API
+# CONFIG
 # ======================
 
 API_KEY = "4b17399dcf214533abd7d72ea416f1df"
 td = TDClient(apikey=API_KEY)
 
-st.set_page_config(page_title="Robô Pro Evoluído", layout="wide")
-st.title("🤖 Robô Pro Evoluído")
+st.set_page_config(page_title="Robô apenas", layout="wide")
+st.title("🤖 Robô apenas")
 
 ATIVO = "EUR/USD"
+
+# ======================
+# BOTÃO ATUALIZAR
+# ======================
 
 if st.button("🔄 Atualizar dados"):
     st.rerun()
@@ -37,7 +40,7 @@ def pegar_dados():
     df = df[::-1].reset_index()
     df["datetime"] = pd.to_datetime(df["datetime"])
 
-    for c in ["open", "high", "low", "close"]:
+    for c in ["open","high","low","close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df.dropna()
@@ -47,8 +50,8 @@ def pegar_dados():
 # ======================
 
 def tendencia(df):
-    df["EMA50"] = EMAIndicator(df["close"], 50).ema_indicator()
-    df["EMA200"] = EMAIndicator(df["close"], 200).ema_indicator()
+    df["EMA50"] = EMAIndicator(df["close"],50).ema_indicator()
+    df["EMA200"] = EMAIndicator(df["close"],200).ema_indicator()
 
     if df["EMA50"].iloc[-1] > df["EMA200"].iloc[-1]:
         return "ALTA"
@@ -57,40 +60,11 @@ def tendencia(df):
     return "LATERAL"
 
 # ======================
-# SUPORTE / RESISTÊNCIA BASE
+# SUPORTE / RESISTÊNCIA
 # ======================
 
-def zonas_base(df):
-    ult = df.tail(144)
-
-    suporte = ult["low"].min()
-    resistencia = ult["high"].max()
-
-    return suporte, resistencia
-
-# ======================
-# REGIME DE MERCADO
-# ======================
-
-def regime_mercado(df, sup, res):
-
-    preco = df["close"].iloc[-1]
-
-    if preco > res:
-        return "EXPANSAO_ALTA"
-
-    if preco < sup:
-        return "EXPANSAO_BAIXA"
-
-    return "CONSOLIDACAO"
-
-# ======================
-# NOVA ZONA (EXPANSÃO)
-# ======================
-
-def nova_zona(df):
-
-    ult = df.tail(50)
+def zonas(df):
+    ult = df.tail(144)  # últimas 12h (M5)
 
     suporte = ult["low"].min()
     resistencia = ult["high"].max()
@@ -103,29 +77,22 @@ def nova_zona(df):
 
 def analisar(df):
 
-    df["EMA9"] = EMAIndicator(df["close"], 9).ema_indicator()
-    df["EMA21"] = EMAIndicator(df["close"], 21).ema_indicator()
-    df["RSI"] = RSIIndicator(df["close"], 14).rsi()
+    df["EMA9"] = EMAIndicator(df["close"],9).ema_indicator()
+    df["EMA21"] = EMAIndicator(df["close"],21).ema_indicator()
+    df["RSI"] = RSIIndicator(df["close"],14).rsi()
 
     macd = MACD(df["close"])
-    df["MACD"] = macd.macd()
+    df["macd"] = macd.macd()
 
     preco = df["close"].iloc[-1]
 
-    sup_base, res_base = zonas_base(df)
+    sup, res = zonas(df)
     trend = tendencia(df)
-    regime = regime_mercado(df, sup_base, res_base)
-
-    # decide qual zona usar
-    if regime == "CONSOLIDACAO":
-        sup, res = sup_base, res_base
-    else:
-        sup, res = nova_zona(df)
 
     score = 0
     erros = []
 
-    # tendência
+    # CONTEXTO
     if trend == "ALTA":
         score += 1
     elif trend == "BAIXA":
@@ -146,28 +113,22 @@ def analisar(df):
         erros.append("RSI fraco")
 
     # MACD
-    if df["MACD"].iloc[-1] > 0:
+    if df["macd"].iloc[-1] > 0:
         score += 1
     else:
         erros.append("MACD contra")
 
-    # informação de regime
-    if regime == "EXPANSAO_ALTA":
-        erros.append("Expansão de alta (esperar pullback)")
-    if regime == "EXPANSAO_BAIXA":
-        erros.append("Expansão de baixa (esperar pullback)")
+    # SUPORTE
+    if abs(preco - sup) < (res - sup)*0.3:
+        score += 1
+    else:
+        erros.append("Longe do suporte")
 
+    # DECISÃO
     agora = datetime.datetime.now()
     entrada = agora + datetime.timedelta(minutes=5)
     saida = entrada + datetime.timedelta(minutes=5)
 
-    # decisão mais segura em expansão
-    if regime != "CONSOLIDACAO":
-        if score >= 3:
-            return "COMPRA" if regime == "EXPANSAO_ALTA" else "VENDA", preco, entrada, saida, erros
-        return "AGUARDAR", preco, entrada, saida, erros
-
-    # consolidação normal
     if score >= 4:
         return "COMPRA", preco, entrada, saida, erros
 
@@ -184,15 +145,9 @@ def backtest(df):
 
     wins = 0
     loss = 0
-    trades = []
+    erros_log = []
 
-    df = df.reset_index(drop=True)
-
-    if len(df) < 250:
-        st.error("Poucos dados para backtest")
-        return 0, 0, []
-
-    for i in range(200, len(df) - 3):
+    for i in range(200, len(df)-1):
 
         hora = df["datetime"].iloc[i].hour
 
@@ -206,32 +161,24 @@ def backtest(df):
         if sinal == "AGUARDAR":
             continue
 
-        entry = df["open"].iloc[i + 1]
-        exit_ = df["open"].iloc[i + 2]
+        entrada = df["close"].iloc[i]
+        saida = df["close"].iloc[i+1]
 
         if sinal == "COMPRA":
-            win = exit_ > entry
-        else:
-            win = exit_ < entry
+            if saida > entrada:
+                wins += 1
+            else:
+                loss += 1
+                erros_log.extend(erros)
 
-        if win:
-            wins += 1
-            result = "WIN"
-        else:
-            loss += 1
-            result = "LOSS"
+        if sinal == "VENDA":
+            if saida < entrada:
+                wins += 1
+            else:
+                loss += 1
+                erros_log.extend(erros)
 
-        trades.append({
-            "time": df["datetime"].iloc[i],
-            "signal": sinal,
-            "result": result,
-            "entry": entry,
-            "exit": exit_,
-            "erros": erros,
-            "regime": regime_mercado(df.iloc[:i], *zonas_base(df.iloc[:i]))
-        })
-
-    return wins, loss, trades
+    return wins, loss, erros_log
 
 # ======================
 # EXECUÇÃO
@@ -244,30 +191,50 @@ st.write("📊 Tendência:", trend)
 
 sinal, preco, entrada, saida, erros = analisar(df)
 
-st.metric("💰 Preço atual", round(preco, 5))
+st.metric("💰 Preço atual", preco)
+
+# ======================
+# SINAL
+# ======================
 
 if sinal == "COMPRA":
-    st.success(f"🟢 COMPRA\nEntrada: {entrada}\nSaída: {saida}")
+    st.success(f"""
+🟢 COMPRA
+
+Entrada: {entrada.strftime('%H:%M')}
+Saída: {saida.strftime('%H:%M')}
+""")
 
 elif sinal == "VENDA":
-    st.error(f"🔴 VENDA\nEntrada: {entrada}\nSaída: {saida}")
+    st.error(f"""
+🔴 VENDA
+
+Entrada: {entrada.strftime('%H:%M')}
+Saída: {saida.strftime('%H:%M')}
+""")
 
 else:
     st.warning("⚪ AGUARDAR")
 
-st.subheader("⚠️ Motivos de análise")
+# ======================
+# ERROS ATUAIS
+# ======================
+
+st.subheader("⚠️ Motivos para não entrar forte")
+
 for e in erros:
-    st.write("•", e)
+    st.write("-", e)
 
 # ======================
-# BACKTEST
+# BOTÃO BACKTEST
 # ======================
 
-if st.button("📊 Rodar Backtest"):
+if st.button("📊 Rodar Backtest 30 dias (08h às 12h)"):
 
-    wins, loss, trades = backtest(df)
+    wins, loss, erros_log = backtest(df)
 
     total = wins + loss
+
     taxa = (wins / total * 100) if total > 0 else 0
 
     st.subheader("📈 Resultado")
@@ -275,6 +242,11 @@ if st.button("📊 Rodar Backtest"):
     st.write("✅ Wins:", wins)
     st.write("❌ Loss:", loss)
     st.write(f"🎯 Assertividade: {taxa:.2f}%")
+
+    st.subheader("⚠️ Principais erros")
+
+    for e in set(erros_log):
+        st.write("-", e)
 
 # ======================
 # GRÁFICO
@@ -290,6 +262,6 @@ fig.add_trace(go.Candlestick(
     close=df["close"]
 ))
 
-fig.update_layout(height=600, template="plotly_dark")
+fig.update_layout(template="plotly_dark", height=500)
 
 st.plotly_chart(fig, use_container_width=True)
